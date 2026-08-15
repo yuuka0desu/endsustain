@@ -1,0 +1,7 @@
+{
+  "criteria": {
+    "battle": {
+      "trigger": "minecraft:impossible"
+    }
+  }
+}

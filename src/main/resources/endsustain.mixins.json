@@ -1,0 +1,19 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "com.endsustain.mixin",
+  "compatibilityLevel": "JAVA_17",
+  "refmap": "endsustain.refmap.json",
+  "mixins": [
+    "LocalMobCapMixin",
+    "NaturalSpawnerMixin",
+    "ServerChunkCacheMixin",
+    "TidalHookEntityMixin"
+  ],
+  "client": [
+    "LightTextureMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

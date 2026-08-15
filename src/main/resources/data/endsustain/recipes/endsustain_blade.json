@@ -1,0 +1,40 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "equipment",
+  "pattern": [
+    "NTN",
+    "SCE",
+    "DAB"
+  ],
+  "key": {
+    "N": {
+      "item": "minecraft:netherite_block"
+    },
+    "T": {
+      "item": "minecraft:trident"
+    },
+    "S": {
+      "item": "celestial_artifacts:sakura_hairpin"
+    },
+    "C": {
+      "item": "endsustain:endsustain_core"
+    },
+    "E": {
+      "item": "celestial_artifacts:evil_eye"
+    },
+    "D": {
+      "item": "goety:dark_metal_block"
+    },
+    "A": {
+      "item": "goety_revelation:ascension_halo"
+    },
+    "B": {
+      "item": "endsustain:zhanjiangdoll"
+    }
+  },
+  "result": {
+    "item": "endsustain:endsustain_blade",
+    "count": 1
+  },
+  "show_notification": true
+}

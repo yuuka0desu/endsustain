@@ -1,0 +1,45 @@
+{
+  "type": "goety:ritual",
+  "ritual_type": "goety:summon",
+  "activation_item": {
+    "item": "goety_revelation:ascension_halo"
+  },
+  "research": "forbidden",
+  "craftType": "closing",
+  "entity_to_summon": "endsustain:finale",
+  "entity_to_sacrifice": {
+    "tag": "goety:pigs",
+    "display_name": "entity.minecraft.pig"
+  },
+  "soulCost": 1000,
+  "duration": 60,
+  "ingredients": [
+    {
+      "item": "cataclysm:gauntlet_of_guard"
+    },
+    {
+      "item": "legendary_monsters:large_shulker_shell"
+    },
+    {
+      "item": "legendary_monsters:chorus_crystal"
+    },
+    {
+      "item": "bosses_of_mass_destruction:obsidian_heart"
+    },
+    {
+      "item": "meetyourfight:fortunes_favor"
+    },
+    {
+      "item": "goety_revelation:the_needle"
+    },
+    {
+      "item": "touhou_little_maid_spell:dream_cat_crystal"
+    },
+    {
+      "item": "smithstory:naiyin"
+    }
+  ],
+  "result": {
+    "item": "goety:jei_dummy/none"
+  }
+}

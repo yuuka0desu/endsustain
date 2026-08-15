@@ -1,0 +1,10 @@
+.gradle/
+.narrafork/
+build/
+run/
+.idea/
+.vscode/
+*.iml
+*.class
+*.jar
+hs_err_pid*

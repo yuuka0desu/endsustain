@@ -1,0 +1,31 @@
+{
+  "type": "minecraft:crafting_shaped",
+  "category": "misc",
+  "pattern": [
+    " P ",
+    "TFC",
+    " S "
+  ],
+  "key": {
+    "P": {
+      "item": "minecraft:pig_spawn_egg"
+    },
+    "T": {
+      "item": "cataclysm:tidal_claws"
+    },
+    "F": {
+      "item": "alexscaves:fissile_core"
+    },
+    "C": {
+      "item": "goety_revelation:valettein"
+    },
+    "S": {
+      "item": "endsustain:stockings"
+    }
+  },
+  "result": {
+    "item": "endsustain:zhanjiangdoll",
+    "count": 1
+  },
+  "show_notification": true
+}

@@ -1,0 +1,107 @@
+plugins {
+    id 'eclipse'
+    id 'idea'
+    id 'net.minecraftforge.gradle' version '[6.0,6.2)'
+    id 'org.spongepowered.mixin' version '0.7-SNAPSHOT'
+}
+
+version = mod_version
+group = mod_group_id
+
+base {
+    archivesName = mod_id
+}
+
+java.toolchain.languageVersion = JavaLanguageVersion.of(17)
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+mixin {
+    add sourceSets.main, 'endsustain.refmap.json'
+    config 'endsustain.mixins.json'
+}
+
+minecraft {
+    mappings channel: mapping_channel, version: mapping_version
+
+    copyIdeResources = true
+
+    runs {
+        configureEach {
+            workingDirectory project.file('run')
+            property 'forge.logging.markers', 'REGISTRIES'
+            property 'forge.logging.console.level', 'debug'
+            mods {
+                "${mod_id}" {
+                    source sourceSets.main
+                }
+            }
+        }
+        client { property 'forge.enabledGameTestNamespaces', mod_id }
+        server {
+            property 'forge.enabledGameTestNamespaces', mod_id
+            args '--nogui'
+        }
+    }
+}
+
+sourceSets.main.resources { srcDir 'src/generated/resources' }
+
+repositories {
+    mavenCentral()
+    // GeckoLib
+    maven { url 'https://dl.cloudsmith.io/public/geckolib3/geckolib/maven/' }
+    // Curios
+    maven { url 'https://maven.theillusivec4.top/' }
+    // CurseMaven (用于 irons_spellbooks / ysm / goety 等无公开 maven 的前置)
+    maven { url 'https://www.cursemaven.com'; content { includeGroup 'curse.maven' } }
+}
+
+dependencies {
+    minecraft "net.minecraftforge:forge:${minecraft_version}-${forge_version}"
+    annotationProcessor 'org.spongepowered:mixin:0.8.5:processor'
+
+    // ---- GeckoLib (仅用于加载 Bedrock 静态模型，不做骨骼动画) ----
+    implementation fg.deobf('software.bernie.geckolib:geckolib-forge-1.20.1:4.4.9')
+    compileOnly fg.deobf('top.theillusivec4.curios:curios-forge:5.11.0+1.20.1:api')
+    // 灾变：用于潮汐钩爪兼容 Mixin 的编译期目标，运行时由整合包提供。
+    compileOnly fg.deobf(files('C:/Users/Administrator/Desktop/PCL/PCL/.minecraft/versions/Closing Song1.6.5/mods/L_Enders_Cataclysm-3.09.jar'))
+
+    // ---- 四个前置依赖 (编译期兼容代码所需; 运行时由实际 jar 提供) ----
+    // Iron's Spells 'n Spellbooks
+    // compileOnly fg.deobf('curse.maven:irons-spells-n-spellbooks-553576:5642723')
+    // Yes Steve Model
+    // compileOnly fg.deobf('curse.maven:yes-steve-model-953757:5168935')
+    // Goety
+    // compileOnly fg.deobf('curse.maven:goety-405370:6390928')
+    // Goety Revelation
+    // compileOnly fg.deobf('curse.maven:goety-revelation-1014157:6238889')
+}
+
+tasks.named('processResources', ProcessResources).configure {
+    var replaceProperties = [
+            minecraft_version: minecraft_version, minecraft_version_range: minecraft_version_range,
+            forge_version: forge_version, forge_version_range: forge_version_range,
+            loader_version_range: loader_version_range,
+            mod_id: mod_id, mod_name: mod_name, mod_version: mod_version,
+            mod_authors: mod_authors, mod_description: mod_description, mod_group_id: mod_group_id
+    ]
+    inputs.properties replaceProperties
+    filesMatching(['META-INF/mods.toml', 'pack.mcmeta']) {
+        expand replaceProperties
+    }
+}
+
+tasks.named('jar', Jar).configure {
+    manifest {
+        attributes(['Specification-Title': mod_id,
+                    'Specification-Vendor': mod_authors,
+                    'Specification-Version': '1',
+                    'Implementation-Title': project.name,
+                    'Implementation-Version': project.jar.archiveVersion,
+                    'Implementation-Vendor': mod_authors,
+                    'MixinConfigs': 'endsustain.mixins.json'])
+    }
+}
