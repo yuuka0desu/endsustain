@@ -577,7 +577,10 @@ public final class FinaleActiveSkills {
         if (!PENDING_THORNS.isEmpty()) {
             PENDING_THORNS.removeIf(thorn -> {
                 ServerLevel level = server.getLevel(net.minecraft.resources.ResourceKey.create(net.minecraft.core.registries.Registries.DIMENSION, thorn.dimension));
-                if (level == null || level.getGameTime() < thorn.dueTick) return false;
+                if (level == null) return true;
+                if (level.getGameTime() < thorn.dueTick) return false;
+                com.endsustain.network.EndSustainNetwork.sendThornSpikes(
+                        level, java.util.List.of(thorn.position));
                 Entity ownerEntity = level.getEntity(thorn.owner);
                 if (!(ownerEntity instanceof ServerPlayer owner)) return true;
                 AABB box = new AABB(thorn.position).inflate(1.25D, 2.0D, 1.25D);
