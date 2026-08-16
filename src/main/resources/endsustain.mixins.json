@@ -8,7 +8,9 @@
     "LocalMobCapMixin",
     "NaturalSpawnerMixin",
     "ServerChunkCacheMixin",
-    "TidalHookEntityMixin"
+    "TidalHookEntityMixin",
+    "LivingEntityTerminalStateMixin",
+    "ForgeHooksTerminalDeathMixin"
   ],
   "client": [
     "LightTextureMixin"

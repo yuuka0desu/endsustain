@@ -31,6 +31,7 @@ import net.minecraftforge.registries.ForgeRegistries;
 import net.minecraftforge.eventbus.api.EventPriority;
 import net.minecraftforge.event.RegisterCommandsEvent;
 import net.minecraftforge.event.ServerChatEvent;
+import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.event.entity.living.LivingAttackEvent;
 import net.minecraftforge.event.entity.living.LivingDamageEvent;
 import net.minecraftforge.event.entity.living.LivingDropsEvent;
@@ -56,6 +57,13 @@ public class ForgeBusEvents {
             compatInitialized = true;
             // 此时所有 mod、配置、资源均已完成加载
             CompatHandler.init(null);
+        }
+    }
+
+    @SubscribeEvent
+    public static void onServerTick(TickEvent.ServerTickEvent event) {
+        if (event.phase == TickEvent.Phase.END) {
+            TrueKillUtil.tickPendingDeaths(event.getServer());
         }
     }
 
@@ -172,6 +180,14 @@ public class ForgeBusEvents {
         }
     }
 
+    @SubscribeEvent(priority = EventPriority.LOWEST, receiveCanceled = true)
+    public static void onTerminalDeathFinalization(LivingDeathEvent event) {
+        if (event.getEntity().getPersistentData()
+                .getBoolean(TrueKillUtil.TERMINAL_STATE_KEY)) {
+            event.setCanceled(false);
+        }
+    }
+
     @SubscribeEvent
     public static void onQunUDeath(LivingDeathEvent event) {
         if (!(event.getEntity() instanceof com.endsustain.entity.boss.QunUEntity qun)) return;
@@ -222,7 +238,8 @@ public class ForgeBusEvents {
                 || !(event.getTarget() instanceof LivingEntity target)
                 || !player.getMainHandItem().is(ModItems.ENDSUSTAIN_BLADE.get())
                 || !EndsustainBladeItem.hasOverflowDamage(player)
-                || target.getPersistentData().getBoolean("EndsustainTrueKillRunning")) return;
+                || target.getPersistentData().getBoolean("EndsustainTrueKillRunning")
+                || TrueKillUtil.isPending(target)) return;
         target.getPersistentData().putBoolean("EndsustainTrueKillRunning", true);
         try {
             com.endsustain.EndSustain.LOGGER.info("终焉之刃溢出近战命中：玩家={}，目标={}，游戏分钟={}，基础伤害={}",

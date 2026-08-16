@@ -23,7 +23,7 @@ public class FinalePathScreen extends Screen {
             "X键 · 命中后召唤多道激光 · 冷却50秒",
             "C键钩爪；G键切换固定目标触手 · 冷却100秒 · 水下呼吸/陆地回复II",
             "V键 · 在面朝方向召唤烈焰轰击 · 冷却2分钟",
-            "M键 · 1分钟绝对闪避传送，并发射10支死亡箭 · 冷却10分钟"
+            "M键 · 展开40格领域，锁定敌对目标并天降死亡箭（最多20支） · 冷却10分钟"
     };
     private int page, selected, chapterScroll, textScroll;
     public FinalePathScreen() { super(Component.translatable("screen.endsustain.finale_path")); }
@@ -68,7 +68,12 @@ public class FinalePathScreen extends Screen {
             g.drawString(font,roman(i+1)+"  "+SKILLS[i],x+42,yy+1,color,false);
             g.drawString(font,STATS[i],x+132,yy+1,0xFFB8ACBF,false);
             g.drawString(font,inherited?"已继承":active?"当前生效":"任务 + "+(questAndDrop?"掉落已见证":"需获得掉落"),x+42,yy+13,color,false);
-            g.drawString(font,SKILL_DESCRIPTIONS[i],x+42,yy+24,0xFFC9B7D0,false);
+            if (i == 5) {
+                g.drawString(font,"M键 · 40格领域锁敌，天降死亡箭×20",x+42,yy+22,0xFFC9B7D0,false);
+                g.drawString(font,"50%闪避；清Buff/禁疗；狱火龙卷；四柱护体",x+42,yy+32,0xFFC9B7D0,false);
+            } else {
+                g.drawString(font,SKILL_DESCRIPTIONS[i],x+42,yy+24,0xFFC9B7D0,false);
+            }
         }
     }
 

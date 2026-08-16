@@ -19,12 +19,18 @@ import net.minecraft.world.entity.OwnableEntity;
 import net.minecraft.world.entity.monster.Enemy;
 import net.minecraft.world.entity.projectile.AbstractArrow;
 import net.minecraft.world.entity.projectile.Projectile;
+import net.minecraft.world.effect.MobEffectCategory;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraftforge.event.entity.living.LivingChangeTargetEvent;
+import net.minecraftforge.event.entity.living.LivingDamageEvent;
+import net.minecraftforge.event.entity.living.LivingHealEvent;
+import net.minecraftforge.event.entity.living.LivingHurtEvent;
+import net.minecraftforge.event.entity.ProjectileImpactEvent;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.EntityHitResult;
 import net.minecraft.world.phys.Vec3;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.event.entity.living.LivingAttackEvent;
@@ -39,15 +45,34 @@ import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.UUID;
 
 @Mod.EventBusSubscriber(modid = EndSustain.MOD_ID, bus = Mod.EventBusSubscriber.Bus.FORGE)
 public final class FinaleActiveSkills {
     public static final String DODGE_UNTIL = "EndsustainApocalypseDodgeUntil";
+    private static final String DEATH_ARROW_ID = "goety:death_arrow";
+    private static final String HELLFIRE_ID = "goety:hellfire";
+    private static final String FIRE_TORNADO_ID = "goety:fire_tornado";
+    private static final String PILLAR_ID = "goety:obsidian_monolith";
+    private static final String DEATH_ARROW_FIRE_DONE = "EndsustainDeathArrowFireDone";
+    private static final String DEATH_ARROW_DEBUFF_DONE = "EndsustainDeathArrowDebuffDone";
+    private static final String HEAL_BLOCK_UNTIL = "EndsustainDeathArrowHealBlockUntil";
+    private static final String PILLAR_OWNER = "EndsustainPillarOwner";
+    private static final String PILLAR_ANCHOR_ID = "EndsustainPillarAnchorId";
+    private static final String PILLAR_ANCHOR = "EndsustainPillarAnchor";
+    private static final String PILLAR_EXPIRE_TICK = "EndsustainPillarExpireTick";
+    private static final String PILLAR_HEALTH_SNAPSHOT = "EndsustainPillarHealthSnapshot";
+    private static final String PILLAR_PROTECTED = "EndsustainPillarProtected";
+    private static final int PILLAR_LIFESPAN = 20 * 60;
+    private static final double APOCALYPSE_DOMAIN_RADIUS = 40.0D;
+    private static final int APOCALYPSE_ARROW_LIMIT = 20;
+    private static final int APOCALYPSE_TRACKING_TICKS = 80;
     private static final String COOLDOWN_PREFIX = "EndsustainFinaleSkillCooldown";
     private static final String TIDAL_TENTACLES_ENABLED = "EndsustainTidalTentaclesEnabled";
     private static final String ABYSS_EFFECTS = "EndsustainAbyssEffects";
     private static final long[] COOLDOWNS = {50_000L, 300_000L, 50_000L, 100_000L, 120_000L, 600_000L};
     private static final List<PendingThorn> PENDING_THORNS = new ArrayList<>();
+    private static final List<PendingDomainArrow> PENDING_DOMAIN_ARROWS = new ArrayList<>();
 
     private FinaleActiveSkills() {}
 
@@ -148,6 +173,140 @@ public final class FinaleActiveSkills {
         ResourceLocation id = ForgeRegistries.ENTITY_TYPES.getKey(event.getEntity().getType());
         if (id != null && id.equals(new ResourceLocation("cataclysm", "deepling"))
                 && event.getNewTarget() instanceof ServerPlayer) event.setNewTarget(null);
+    }
+
+    @SubscribeEvent(priority = EventPriority.NORMAL)
+    public static void onDeathArrowHit(LivingAttackEvent event) {
+        Entity direct = event.getSource().getDirectEntity();
+        if (!(direct instanceof Projectile projectile) || !isEntity(projectile, DEATH_ARROW_ID)) return;
+        if (event.isCanceled()) return;
+        LivingEntity target = event.getEntity();
+        if (target instanceof ServerPlayer player && hasPillarProtection(player)) return;
+        LivingEntity owner = projectile.getOwner() instanceof LivingEntity living ? living : null;
+        applyDeathArrowImpact(projectile, target.position(), owner, target);
+    }
+
+    @SubscribeEvent(priority = EventPriority.HIGHEST, receiveCanceled = true)
+    public static void onDeathArrowImpact(ProjectileImpactEvent event) {
+        Projectile projectile = event.getProjectile();
+        if (!isEntity(projectile, DEATH_ARROW_ID) || projectile.level().isClientSide) return;
+        LivingEntity owner = projectile.getOwner() instanceof LivingEntity living ? living : null;
+        LivingEntity hitTarget = null;
+        if (event.getRayTraceResult() instanceof EntityHitResult entityHit
+                && entityHit.getEntity() instanceof LivingEntity livingTarget) {
+            hitTarget = livingTarget;
+        }
+        applyDeathArrowImpact(projectile, event.getRayTraceResult().getLocation(), owner, hitTarget);
+    }
+
+    @SubscribeEvent(priority = EventPriority.HIGHEST, receiveCanceled = true)
+    public static void onPillarProtectedAttack(LivingAttackEvent event) {
+        if (event.getEntity() instanceof ServerPlayer player && hasPillarProtection(player)) {
+            event.setCanceled(true);
+        }
+    }
+
+    @SubscribeEvent(priority = EventPriority.HIGHEST, receiveCanceled = true)
+    public static void onPillarProtectedHurt(LivingHurtEvent event) {
+        if (event.getEntity() instanceof ServerPlayer player && hasPillarProtection(player)) {
+            event.setCanceled(true);
+        }
+    }
+
+    @SubscribeEvent(priority = EventPriority.HIGHEST, receiveCanceled = true)
+    public static void onPillarProtectedDamage(LivingDamageEvent event) {
+        if (event.getEntity() instanceof ServerPlayer player && hasPillarProtection(player)) {
+            event.setCanceled(true);
+        }
+    }
+
+    @SubscribeEvent(priority = EventPriority.HIGHEST, receiveCanceled = true)
+    public static void onDeathArrowHealingBlocked(LivingHealEvent event) {
+        LivingEntity target = event.getEntity();
+        if (target.level().getGameTime() < target.getPersistentData().getLong(HEAL_BLOCK_UNTIL)) {
+            event.setCanceled(true);
+        }
+    }
+
+    private static void applyDeathArrowImpact(Projectile projectile, Vec3 position,
+                                              LivingEntity owner, LivingEntity hitTarget) {
+        if (hitTarget != null && !projectile.getPersistentData().getBoolean(DEATH_ARROW_DEBUFF_DONE)) {
+            projectile.getPersistentData().putBoolean(DEATH_ARROW_DEBUFF_DONE, true);
+            for (MobEffectInstance effect : new ArrayList<>(hitTarget.getActiveEffects())) {
+                if (effect.getEffect().getCategory() == MobEffectCategory.BENEFICIAL) {
+                    hitTarget.removeEffect(effect.getEffect());
+                }
+            }
+            hitTarget.getPersistentData().putLong(
+                    HEAL_BLOCK_UNTIL,
+                    hitTarget.level().getGameTime() + 20L * 15L);
+        }
+        if (projectile.getPersistentData().getBoolean(DEATH_ARROW_FIRE_DONE)) return;
+        projectile.getPersistentData().putBoolean(DEATH_ARROW_FIRE_DONE, true);
+        if (!(projectile.level() instanceof ServerLevel level)) return;
+        spawnDeathArrowFire(level, position, owner, hitTarget);
+    }
+
+    private static void spawnDeathArrowFire(ServerLevel level, Vec3 position,
+                                             LivingEntity owner, LivingEntity target) {
+        Entity hellfire = create(HELLFIRE_ID, level);
+        if (hellfire != null) {
+            hellfire.setPos(position.x, position.y, position.z);
+            invoke(hellfire, "setOwner", new Class[]{LivingEntity.class}, owner);
+            invoke(hellfire, "setExtraDamage", new Class[]{float.class},
+                    owner == null ? 0.0F : Math.max(4.0F, (float) owner.getAttributeValue(net.minecraft.world.entity.ai.attributes.Attributes.ATTACK_DAMAGE) * 0.5F));
+            level.addFreshEntity(hellfire);
+        }
+
+        Entity tornado = create(FIRE_TORNADO_ID, level);
+        if (tornado != null) {
+            tornado.setPos(position.x, position.y, position.z);
+            invoke(tornado, "setOwner", new Class[]{LivingEntity.class}, owner);
+            invoke(tornado, "setTarget", new Class[]{LivingEntity.class}, target);
+            invoke(tornado, "setDamage", new Class[]{float.class},
+                    owner == null ? 7.0F : Math.max(7.0F, (float) owner.getAttributeValue(net.minecraft.world.entity.ai.attributes.Attributes.ATTACK_DAMAGE) * 0.75F));
+            invoke(tornado, "setSize", new Class[]{float.class}, 2.0F);
+            invoke(tornado, "setLifespan", new Class[]{int.class}, 200);
+            level.addFreshEntity(tornado);
+        }
+        level.sendParticles(ParticleTypes.SOUL_FIRE_FLAME,
+                position.x, position.y + 0.5D, position.z,
+                36, 0.6D, 0.5D, 0.6D, 0.08D);
+    }
+
+    private static boolean isEntity(Entity entity, String id) {
+        ResourceLocation typeId = entity == null ? null : ForgeRegistries.ENTITY_TYPES.getKey(entity.getType());
+        return typeId != null && typeId.toString().equals(id);
+    }
+
+    @SubscribeEvent
+    public static void onPillarProtectedPlayerTick(TickEvent.PlayerTickEvent event) {
+        if (event.phase != TickEvent.Phase.END || event.player.level().isClientSide
+                || !(event.player instanceof ServerPlayer player)) return;
+        if (hasPillarProtection(player)) {
+            if (!player.getPersistentData().getBoolean(PILLAR_PROTECTED)) {
+                player.getPersistentData().putFloat(PILLAR_HEALTH_SNAPSHOT, player.getHealth());
+                player.getPersistentData().putBoolean(PILLAR_PROTECTED, true);
+            }
+            float snapshot = player.getPersistentData().getFloat(PILLAR_HEALTH_SNAPSHOT);
+            if (Math.abs(player.getHealth() - snapshot) > 0.0001F) {
+                player.setHealth(snapshot);
+            }
+        } else if (player.getPersistentData().getBoolean(PILLAR_PROTECTED)) {
+            player.getPersistentData().remove(PILLAR_HEALTH_SNAPSHOT);
+            player.getPersistentData().remove(PILLAR_PROTECTED);
+        }
+    }
+
+    private static boolean hasPillarProtection(ServerPlayer player) {
+        UUID owner = player.getUUID();
+        return player.serverLevel().getEntitiesOfClass(Entity.class,
+                player.getBoundingBox().inflate(12.0D), entity ->
+                        entity.isAlive()
+                                && isEntity(entity, PILLAR_ID)
+                                && entity.getPersistentData().hasUUID(PILLAR_OWNER)
+                                && owner.equals(entity.getPersistentData().getUUID(PILLAR_OWNER))
+                                && entity.getPersistentData().getBoolean(PILLAR_ANCHOR)).size() >= 1;
     }
 
     @SubscribeEvent
@@ -335,59 +494,157 @@ public final class FinaleActiveSkills {
     }
 
     private static boolean apocalypseRing(ServerPlayer player) {
-        LivingEntity target = nearestEnemy(player, 40.0D);
-        if (target == null) {
+        ServerLevel level = player.serverLevel();
+        List<LivingEntity> targets = level.getEntitiesOfClass(LivingEntity.class,
+                        player.getBoundingBox().inflate(APOCALYPSE_DOMAIN_RADIUS),
+                        target -> target.isAlive()
+                                && !target.isRemoved()
+                                && target != player
+                                && (target instanceof ServerPlayer || target instanceof net.minecraft.world.entity.monster.Enemy)
+                                && !(target instanceof com.endsustain.entity.companion.SmallZhanjiangCompanionEntity))
+                .stream()
+                .sorted(Comparator.comparingDouble(target -> target.distanceToSqr(player)))
+                .limit(APOCALYPSE_ARROW_LIMIT)
+                .toList();
+        if (targets.isEmpty()) {
             message(player, "message.endsustain.skill.no_target");
             return false;
         }
-        ServerLevel level = player.serverLevel();
+
         int spawned = 0;
-        for (int i = 0; i < 10; i++) {
-            Entity entity = create("goety:death_arrow", level);
+        for (LivingEntity target : targets) {
+            Entity entity = create(DEATH_ARROW_ID, level);
             if (!(entity instanceof AbstractArrow arrow)) continue;
-            double angle = Math.PI * 2.0D * i / 10.0D;
-            Vec3 origin = player.position().add(Math.cos(angle) * 2.4D, 1.2D + (i % 2) * 0.7D, Math.sin(angle) * 2.4D);
+            double spreadX = (player.getRandom().nextDouble() - 0.5D) * 4.0D;
+            double spreadZ = (player.getRandom().nextDouble() - 0.5D) * 4.0D;
+            double skyY = Math.min(level.getMaxBuildHeight() - 3.0D,
+                    target.getY() + 16.0D + player.getRandom().nextDouble() * 6.0D);
+            Vec3 origin = new Vec3(target.getX() + spreadX, skyY, target.getZ() + spreadZ);
             arrow.setOwner(player);
             arrow.setPos(origin.x, origin.y, origin.z);
             Vec3 aim = target.getEyePosition().subtract(origin);
-            arrow.shoot(aim.x, aim.y, aim.z, 2.2F, 1.5F);
-            if (level.addFreshEntity(arrow)) spawned++;
+            arrow.shoot(aim.x, aim.y, aim.z, 2.8F, 0.0F);
+            arrow.getPersistentData().putBoolean("EndsustainApocalypseDomainArrow", true);
+            arrow.getPersistentData().putUUID("EndsustainApocalypseTarget", target.getUUID());
+            if (level.addFreshEntity(arrow)) {
+                spawned++;
+                PENDING_DOMAIN_ARROWS.add(new PendingDomainArrow(level.dimension().location(),
+                        arrow.getUUID(), target.getUUID(), level.getGameTime() + APOCALYPSE_TRACKING_TICKS));
+                level.sendParticles(ParticleTypes.REVERSE_PORTAL,
+                        target.getX(), target.getY() + 0.15D, target.getZ(),
+                        20, 0.45D, 0.05D, 0.45D, 0.03D);
+                level.sendParticles(ParticleTypes.SOUL_FIRE_FLAME,
+                        origin.x, origin.y, origin.z, 12, 0.25D, 0.4D, 0.25D, 0.02D);
+            }
         }
         if (spawned == 0) return false;
+        renderApocalypseDomain(level, player);
+        spawnObsidianPillars(player, level);
         player.getPersistentData().putLong(DODGE_UNTIL, System.currentTimeMillis() + 60_000L);
-        level.sendParticles(ParticleTypes.SOUL_FIRE_FLAME, player.getX(), player.getY() + 1.0D, player.getZ(), 60, 1.2D, 1.0D, 1.2D, 0.04D);
+        level.playSound(null, player.blockPosition(), SoundEvents.END_PORTAL_SPAWN,
+                SoundSource.PLAYERS, 1.4F, 0.7F);
         return true;
+    }
+
+    private static void renderApocalypseDomain(ServerLevel level, ServerPlayer player) {
+        for (int i = 0; i < 96; i++) {
+            double angle = Math.PI * 2.0D * i / 96.0D;
+            double x = player.getX() + Math.cos(angle) * APOCALYPSE_DOMAIN_RADIUS;
+            double z = player.getZ() + Math.sin(angle) * APOCALYPSE_DOMAIN_RADIUS;
+            level.sendParticles(i % 3 == 0 ? ParticleTypes.SOUL_FIRE_FLAME : ParticleTypes.REVERSE_PORTAL,
+                    x, player.getY() + 0.2D, z, 1, 0.0D, 0.08D, 0.0D, 0.0D);
+        }
+        level.sendParticles(ParticleTypes.REVERSE_PORTAL,
+                player.getX(), player.getY() + 1.0D, player.getZ(),
+                90, 2.0D, 1.2D, 2.0D, 0.08D);
     }
 
     @SubscribeEvent(priority = EventPriority.HIGHEST)
     public static void onApocalypseDodge(LivingAttackEvent event) {
         if (!(event.getEntity() instanceof ServerPlayer player) || player.level().isClientSide) return;
         long until = player.getPersistentData().getLong(DODGE_UNTIL);
-        if (until <= System.currentTimeMillis() || event.getSource().is(DamageTypeTags.BYPASSES_INVULNERABILITY)) return;
+        if (until <= System.currentTimeMillis()
+                || event.getSource().is(DamageTypeTags.BYPASSES_INVULNERABILITY)
+                || player.getRandom().nextFloat() >= 0.5F) return;
         event.setCanceled(true);
         teleportDodge(player);
     }
 
     @SubscribeEvent
     public static void onServerTick(TickEvent.ServerTickEvent event) {
-        if (event.phase != TickEvent.Phase.END || PENDING_THORNS.isEmpty()) return;
+        if (event.phase != TickEvent.Phase.END) return;
         var server = event.getServer();
-        PENDING_THORNS.removeIf(thorn -> {
-            ServerLevel level = server.getLevel(net.minecraft.resources.ResourceKey.create(net.minecraft.core.registries.Registries.DIMENSION, thorn.dimension));
-            if (level == null || level.getGameTime() < thorn.dueTick) return false;
-            Entity ownerEntity = level.getEntity(thorn.owner);
-            if (!(ownerEntity instanceof ServerPlayer owner)) return true;
-            AABB box = new AABB(thorn.position).inflate(1.25D, 2.0D, 1.25D);
-            for (LivingEntity target : level.getEntitiesOfClass(LivingEntity.class, box, target -> validTarget(owner, target))) {
-                target.hurt(level.damageSources().playerAttack(owner), Math.max(10.0F,
-                        (float) owner.getAttributeValue(net.minecraft.world.entity.ai.attributes.Attributes.ATTACK_DAMAGE)));
-                target.knockback(1.0D, owner.getX() - target.getX(), owner.getZ() - target.getZ());
-            }
-            level.sendParticles(ParticleTypes.REVERSE_PORTAL, thorn.position.getX() + 0.5D, thorn.position.getY() + 0.8D,
-                    thorn.position.getZ() + 0.5D, 55, 0.45D, 1.1D, 0.45D, 0.08D);
-            level.playSound(null, thorn.position, sound("bosses_of_mass_destruction:void_blossom_spike"), SoundSource.PLAYERS, 1.3F, 0.95F);
-            return true;
-        });
+        if (!PENDING_THORNS.isEmpty()) {
+            PENDING_THORNS.removeIf(thorn -> {
+                ServerLevel level = server.getLevel(net.minecraft.resources.ResourceKey.create(net.minecraft.core.registries.Registries.DIMENSION, thorn.dimension));
+                if (level == null || level.getGameTime() < thorn.dueTick) return false;
+                Entity ownerEntity = level.getEntity(thorn.owner);
+                if (!(ownerEntity instanceof ServerPlayer owner)) return true;
+                AABB box = new AABB(thorn.position).inflate(1.25D, 2.0D, 1.25D);
+                for (LivingEntity target : level.getEntitiesOfClass(LivingEntity.class, box, target -> validTarget(owner, target))) {
+                    target.hurt(level.damageSources().playerAttack(owner), Math.max(10.0F,
+                            (float) owner.getAttributeValue(net.minecraft.world.entity.ai.attributes.Attributes.ATTACK_DAMAGE)));
+                    target.knockback(1.0D, owner.getX() - target.getX(), owner.getZ() - target.getZ());
+                }
+                level.sendParticles(ParticleTypes.REVERSE_PORTAL, thorn.position.getX() + 0.5D, thorn.position.getY() + 0.8D,
+                        thorn.position.getZ() + 0.5D, 55, 0.45D, 1.1D, 0.45D, 0.08D);
+                level.playSound(null, thorn.position, sound("bosses_of_mass_destruction:void_blossom_spike"), SoundSource.PLAYERS, 1.3F, 0.95F);
+                return true;
+            });
+        }
+        if (!PENDING_DOMAIN_ARROWS.isEmpty()) {
+            PENDING_DOMAIN_ARROWS.removeIf(tracking -> {
+                ServerLevel level = server.getLevel(net.minecraft.resources.ResourceKey.create(
+                        net.minecraft.core.registries.Registries.DIMENSION, tracking.dimension));
+                if (level == null || level.getGameTime() > tracking.expireTick) return true;
+                Entity arrowEntity = level.getEntity(tracking.arrow);
+                Entity targetEntity = level.getEntity(tracking.target);
+                if (!(arrowEntity instanceof AbstractArrow arrow)
+                        || !(targetEntity instanceof LivingEntity target)
+                        || arrow.isRemoved()                         || target.isRemoved() || !target.isAlive()) return true;
+                Vec3 desired = target.getEyePosition().subtract(arrow.position());
+                if (desired.lengthSqr() < 0.25D) return false;
+                Vec3 current = arrow.getDeltaMovement();
+                double speed = Math.max(2.8D, current.length());
+                Vec3 currentDirection = current.lengthSqr() < 1.0E-6D
+                        ? desired.normalize() : current.normalize();
+                Vec3 nextDirection = currentDirection.scale(0.62D)
+                        .add(desired.normalize().scale(0.38D)).normalize();
+                arrow.setDeltaMovement(nextDirection.scale(speed));
+                arrow.hurtMarked = true;
+                if (arrow.tickCount % 3 == 0) {
+                    level.sendParticles(ParticleTypes.SOUL_FIRE_FLAME,
+                            arrow.getX(), arrow.getY(), arrow.getZ(),
+                            2, 0.06D, 0.06D, 0.06D, 0.0D);
+                }
+                return false;
+            });
+        }
+    }
+
+    private static void spawnObsidianPillars(ServerPlayer player, ServerLevel level) {
+        player.getPersistentData().putFloat(PILLAR_HEALTH_SNAPSHOT, player.getHealth());
+        player.getPersistentData().putBoolean(PILLAR_PROTECTED, true);
+        UUID anchor = UUID.randomUUID();
+        int[][] offsets = {{5, 0}, {-5, 0}, {0, 5}, {0, -5}};
+        for (int[] offset : offsets) {
+            BlockPos start = BlockPos.containing(player.getX() + offset[0], player.getY() + 4.0D,
+                    player.getZ() + offset[1]);
+            BlockPos ground = findGround(level, start);
+            Entity pillar = create(PILLAR_ID, level);
+            if (pillar == null) continue;
+            pillar.setPos(ground.getX() + 0.5D, ground.getY() + 1.0D, ground.getZ() + 0.5D);
+            invoke(pillar, "setOwnerId", new Class[]{UUID.class}, player.getUUID());
+            invoke(pillar, "setOwnerClientId", new Class[]{int.class}, player.getId());
+            invoke(pillar, "setHostile", new Class[]{boolean.class}, false);
+            invoke(pillar, "setNatural", new Class[]{boolean.class}, false);
+            invoke(pillar, "setHasLifespan", new Class[]{boolean.class}, true);
+            invoke(pillar, "setLifespan", new Class[]{int.class}, PILLAR_LIFESPAN);
+            pillar.getPersistentData().putUUID(PILLAR_OWNER, player.getUUID());
+            pillar.getPersistentData().putUUID(PILLAR_ANCHOR_ID, anchor);
+            pillar.getPersistentData().putBoolean(PILLAR_ANCHOR, true);
+            level.addFreshEntity(pillar);
+        }
     }
 
     private static void teleportDodge(ServerPlayer player) {
@@ -486,4 +743,5 @@ public final class FinaleActiveSkills {
     }
 
     private record PendingThorn(ResourceLocation dimension, BlockPos position, java.util.UUID owner, long dueTick) {}
+    private record PendingDomainArrow(ResourceLocation dimension, UUID arrow, UUID target, long expireTick) {}
 }

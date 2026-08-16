@@ -62,7 +62,7 @@
     "message.endsustain.skill.cast.2": "先驱之力：八方追加激光已释放",
     "message.endsustain.skill.cast.3": "深渊回响：潮汐钩爪已释放",
     "message.endsustain.skill.cast.4": "旧世余烬：烈焰轰击已释放",
-    "message.endsustain.skill.cast.5": "天启之环：一分钟绝对闪避已生效",
+    "message.endsustain.skill.cast.5": "天启之环：领域已展开，天降死亡箭已锁定敌对目标",
     "message.endsustain.skill.tidal_enabled": "深渊回响：固定目标潮汐触手已开启",
     "message.endsustain.skill.tidal_disabled": "深渊回响：固定目标潮汐触手已关闭"
 }
