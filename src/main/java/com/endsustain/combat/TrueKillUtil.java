@@ -104,6 +104,11 @@ public final class TrueKillUtil {
         return PENDING_DEATHS.containsKey(target.getUUID());
     }
 
+    public static void cancelPending(LivingEntity target) {
+        PENDING_DEATHS.remove(target.getUUID());
+        IN_PROGRESS.remove(target.getUUID());
+    }
+
     public static void tickPendingDeaths(MinecraftServer server) {
         Iterator<Map.Entry<UUID, PendingDeath>> iterator = PENDING_DEATHS.entrySet().iterator();
         while (iterator.hasNext()) {

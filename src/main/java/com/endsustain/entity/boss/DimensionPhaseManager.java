@@ -33,6 +33,11 @@ final class DimensionPhaseManager {
 
     private DimensionPhaseManager() {}
 
+    static boolean isTransitioning(FinaleEndsustainEntity boss) {
+        return PENDING.containsKey(boss.getUUID())
+                || boss.getPersistentData().getBoolean("EndsustainDimensionTransition");
+    }
+
     static boolean tick(FinaleEndsustainEntity boss) {
         if (!(boss.level() instanceof ServerLevel source)) return false;
         PendingTransfer pending = PENDING.get(boss.getUUID());
@@ -58,8 +63,10 @@ final class DimensionPhaseManager {
                             changed.teleportTo(pending.position.getX() + 0.5D,
                                     pending.position.getY() + 0.1D,
                                     pending.position.getZ() + 0.5D);
+                            changed.getPersistentData().putBoolean("EndsustainDimensionTransition", false);
                         }
                     }
+                    boss.getPersistentData().putBoolean("EndsustainDimensionTransition", false);
                     EndSustain.LOGGER.info("[终焉维系] Boss 维度传送完成：目标维度={}，坐标={}，teleportTo={}",
                             pending.dimension.location(), pending.position, moved);
                 }
@@ -75,6 +82,8 @@ final class DimensionPhaseManager {
                 BlockPos destination = new BlockPos(boss.blockPosition().getX(), 129, boss.blockPosition().getZ());
                 if (openPortalPair(boss, source, nether, destination)) {
                     boss.getPersistentData().putBoolean(NETHER_STAGE, true);
+                    boss.getPersistentData().putBoolean("EndsustainDimensionTransition", true);
+                    boss.setOfficialPhase(1);
                     PENDING.put(boss.getUUID(), new PendingTransfer(Level.NETHER, destination,
                             boss.blockPosition().relative(boss.getDirection(), 2).above()));
                     return true;
@@ -90,6 +99,8 @@ final class DimensionPhaseManager {
                 BlockPos destination = locateSkyArena(overworld, boss.blockPosition());
                 if (openPortalPair(boss, source, overworld, destination)) {
                     boss.getPersistentData().putBoolean(OVERWORLD_STAGE, true);
+                    boss.getPersistentData().putBoolean("EndsustainDimensionTransition", true);
+                    boss.setOfficialPhase(2);
                     PENDING.put(boss.getUUID(), new PendingTransfer(Level.OVERWORLD, destination,
                             boss.blockPosition().relative(boss.getDirection(), 2).above()));
                     return true;

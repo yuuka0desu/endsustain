@@ -18,7 +18,6 @@ import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.animal.Pig;
-import net.minecraft.world.entity.item.ItemEntity;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.EnchantedBookItem;
 import net.minecraft.world.item.ItemStack;
@@ -98,17 +97,21 @@ public class ForgeBusEvents {
     @SubscribeEvent(priority = EventPriority.LOWEST, receiveCanceled = true)
     public static void giveFinaleDropsToPlayer(LivingDropsEvent event) {
         if (!(event.getEntity() instanceof FinaleEndsustainEntity boss)) return;
+        net.minecraft.world.item.Item halo = ForgeRegistries.ITEMS.getValue(
+                new net.minecraft.resources.ResourceLocation("goety_revelation", "halo_of_the_end"));
+        // 每一次死亡掉落事件都先移除专属地面掉落，再判断背包奖励事务是否已经完成。
+        event.getDrops().removeIf(drop -> isFinaleExclusiveDrop(drop.getItem(), halo));
+        if (boss.getPersistentData().getBoolean("EndsustainDropsGranted")) return;
 
         ServerPlayer recipient = event.getSource().getEntity() instanceof ServerPlayer sourcePlayer
                 ? sourcePlayer
                 : boss.getLastHurtByMob() instanceof ServerPlayer lastPlayer ? lastPlayer : null;
+        if (recipient == null && boss.level() instanceof ServerLevel level) {
+            recipient = level.getEntitiesOfClass(ServerPlayer.class, boss.getBoundingBox().inflate(64.0D),
+                    player -> player.isAlive() && !player.isSpectator()).stream().findFirst().orElse(null);
+        }
         if (recipient == null) return;
-
-        net.minecraft.world.item.Item halo = ForgeRegistries.ITEMS.getValue(
-                new net.minecraft.resources.ResourceLocation("goety_revelation", "halo_of_the_end"));
-
-        // 从地面掉落集合中移除专属奖励，避免爆炸销毁和重复发放。
-        event.getDrops().removeIf(drop -> isFinaleExclusiveDrop(drop.getItem(), halo));
+        boss.getPersistentData().putBoolean("EndsustainDropsGranted", true);
 
         giveFinaleReward(recipient, new ItemStack(ModItems.ENDSUSTAIN_CORE.get()));
 
@@ -150,13 +153,9 @@ public class ForgeBusEvents {
     }
 
     private static void giveFinaleReward(ServerPlayer player, ItemStack reward) {
-        if (!player.getInventory().add(reward)) {
-            ItemEntity overflow = player.drop(reward, false);
-            if (overflow != null) {
-                overflow.setInvulnerable(true);
-                overflow.setNoPickUpDelay();
-            }
-        }
+        if (reward.isEmpty()) return;
+        player.getInventory().placeItemBackInInventory(reward.copy());
+        player.inventoryMenu.broadcastChanges();
     }
 
     @SubscribeEvent(priority = EventPriority.LOWEST, receiveCanceled = true)
@@ -170,11 +169,12 @@ public class ForgeBusEvents {
     @SubscribeEvent
     public static void onQunUDeath(LivingDeathEvent event) {
         if (!(event.getEntity() instanceof com.endsustain.entity.boss.QunUEntity qun)) return;
-        if (!(event.getSource().getEntity() instanceof ServerPlayer player)) return;
         if (!(qun.level() instanceof ServerLevel level) || qun.getOwnerBoss() == null) return;
         Entity owner = level.getEntity(qun.getOwnerBoss());
         if (owner instanceof FinaleEndsustainEntity boss) {
-            boss.addSleepDamageBonus(player.getUUID());
+            if (event.getSource().getEntity() instanceof ServerPlayer player) {
+                boss.addSleepDamageBonus(player.getUUID());
+            }
             boss.onQunUKilled(qun.getUUID());
         }
     }
@@ -218,7 +218,15 @@ public class ForgeBusEvents {
                 || !player.getMainHandItem().is(ModItems.ENDSUSTAIN_BLADE.get())
                 || !EndsustainBladeItem.hasOverflowDamage(player)
                 || target.getPersistentData().getBoolean("EndsustainTrueKillRunning")
-                || TrueKillUtil.isPending(target)) return;
+                || TrueKillUtil.isPending(target)
+                || target instanceof FinaleEndsustainEntity boss
+                && boss.getHealth() > boss.getMaxHealth() * 0.15F) return;
+        if (target instanceof FinaleEndsustainEntity boss) {
+            boss.setLastHurtByPlayer(player);
+            boss.beginCombatDeathTail(player.damageSources().playerAttack(player));
+            event.setCanceled(true);
+            return;
+        }
         target.getPersistentData().putBoolean("EndsustainTrueKillRunning", true);
         try {
             com.endsustain.EndSustain.LOGGER.info("终焉之刃溢出近战命中：玩家={}，目标={}，游戏分钟={}，基础伤害={}",
@@ -256,8 +264,16 @@ public class ForgeBusEvents {
         spawnEchoingStrikeEffect(event.getEntity(), player);
 
         if (baseDamage > Integer.MAX_VALUE) {
-            TrueKillUtil.forceKill(event.getEntity(), player.damageSources().fellOutOfWorld(), player,
-                    2_100_000_000.0F, true);
+            if (event.getEntity() instanceof FinaleEndsustainEntity boss) {
+                if (boss.getHealth() <= boss.getMaxHealth() * 0.15F) {
+                    boss.setLastHurtByPlayer(player);
+                    boss.beginCombatDeathTail(player.damageSources().playerAttack(player));
+                    event.setCanceled(true);
+                }
+            } else {
+                TrueKillUtil.forceKill(event.getEntity(), player.damageSources().playerAttack(player), player,
+                        2_100_000_000.0F, true);
+            }
         }
     }
 
@@ -309,51 +325,6 @@ public class ForgeBusEvents {
         event.getDispatcher().register(Commands.literal("endsustain_test_charm")
                 .requires(source -> source.hasPermission(2))
                 .executes(ctx -> triggerNearestFinaleCharm(ctx.getSource())));
-        event.getDispatcher().register(Commands.literal("endsustain_test_star_arrows")
-                .requires(source -> source.hasPermission(2))
-                .executes(ctx -> triggerNearestFinaleStarArrows(ctx.getSource())));
-    }
-
-    private static int triggerNearestFinaleStarArrows(net.minecraft.commands.CommandSourceStack source) {
-        ServerLevel level = source.getLevel();
-        var origin = source.getPosition();
-        ServerPlayer nearestPlayer = null;
-        double nearestPlayerDist = Double.MAX_VALUE;
-        for (ServerPlayer player : level.players()) {
-            if (!player.isAlive() || player.isSpectator()) continue;
-            double dist = player.distanceToSqr(origin);
-            if (dist < nearestPlayerDist) {
-                nearestPlayerDist = dist;
-                nearestPlayer = player;
-            }
-        }
-        if (nearestPlayer == null) {
-            source.sendFailure(Component.literal("未找到可作为星辰之矢目标的玩家"));
-            return 0;
-        }
-
-        FinaleEndsustainEntity nearestBoss = null;
-        double nearestBossDist = Double.MAX_VALUE;
-        for (FinaleEndsustainEntity boss : level.getEntitiesOfClass(FinaleEndsustainEntity.class,
-                net.minecraft.world.phys.AABB.ofSize(origin, 256.0D, 256.0D, 256.0D),
-                FinaleEndsustainEntity::isAlive)) {
-            double dist = boss.distanceToSqr(origin);
-            if (dist < nearestBossDist) {
-                nearestBossDist = dist;
-                nearestBoss = boss;
-            }
-        }
-        if (nearestBoss == null) {
-            source.sendFailure(Component.literal("未在 128 格内找到落幕之终焉 Boss"));
-            return 0;
-        }
-
-        nearestBoss.setTarget(nearestPlayer);
-        nearestBoss.fireStarArrowsAt(nearestPlayer);
-        String targetName = nearestPlayer.getGameProfile().getName();
-        source.sendSuccess(() -> Component.literal("已强制最近的落幕之终焉对最近玩家 "
-                + targetName + " 释放星辰之矢"), true);
-        return Command.SINGLE_SUCCESS;
     }
 
     private static int triggerNearestFinaleCharm(net.minecraft.commands.CommandSourceStack source) {

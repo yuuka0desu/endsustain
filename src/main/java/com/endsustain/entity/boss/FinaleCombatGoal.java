@@ -29,7 +29,6 @@ public class FinaleCombatGoal extends Goal {
     private String queuedCrystal;
     private boolean queuedBlade;
     private boolean queuedCharm;
-    private boolean ultUsed;
     private static final int SIMULTANEOUS_SKILL_CASTS = 3;
     private static final int SKILL_COOLDOWN_TICKS = 7; // 约为原 20 tick 间隔的 300% 频率
 
@@ -76,7 +75,6 @@ public class FinaleCombatGoal extends Goal {
         this.cooldown = SKILL_COOLDOWN_TICKS;
         this.lockTicks = 0;
         this.skillQueued = false;
-        this.ultUsed = false;
     }
 
     @Override
@@ -87,14 +85,6 @@ public class FinaleCombatGoal extends Goal {
             this.boss.setTarget(nearest);
         }
         if (this.target == null || !this.target.isAlive()) return;
-
-        // -- 必杀技 --
-        float hpPct = this.boss.getHealth() / this.boss.getMaxHealth();
-        if (!ultUsed && hpPct < 0.15F && this.boss.canBeginCharmOrUltimate() && this.boss.getAttackState() == FinaleEndsustainEntity.STATE_IDLE) {
-            ultUsed = true;
-            this.boss.beginUltimate(this.target);
-            return;
-        }
 
         // -- 当前技能仍在执行时不排入新技能，避免打断 10 秒魔法飞弹弹幕 --
         if (this.boss.getAttackState() != FinaleEndsustainEntity.STATE_IDLE) {
@@ -154,7 +144,7 @@ public class FinaleCombatGoal extends Goal {
 
         if (this.boss.getHealth() < this.boss.getMaxHealth() * 0.50F
                 && this.boss.canBeginCharmOrUltimate()
-                && this.boss.getRandom().nextInt(10) == 0) {
+                && this.boss.isCharmReadyFor(this.target)) {
             queuedCharm = true;
             queuedBlade = false;
             queuedIronSpell = null;

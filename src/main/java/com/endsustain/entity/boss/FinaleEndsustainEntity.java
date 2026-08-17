@@ -5,6 +5,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.network.syncher.EntityDataAccessor;
 import net.minecraft.network.syncher.EntityDataSerializers;
 import net.minecraft.network.syncher.SynchedEntityData;
+import net.minecraft.nbt.CompoundTag;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerBossEvent;
 import net.minecraft.server.level.ServerLevel;
@@ -53,6 +54,8 @@ import java.util.UUID;
  * 受伤 30% 概率瞬移到 32 格内地面。
  */
 public class FinaleEndsustainEntity extends Monster implements GeoEntity {
+    private UUID encounterId = UUID.randomUUID();
+    private int officialPhase;
 
     // ======================== GeckoLib 动画接口 ================
     private final AnimatableInstanceCache animCache = GeckoLibUtil.createInstanceCache(this);
@@ -88,6 +91,9 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
     public static final String SPELL_CHAOS_FLAME      = "chaos_orb";
     public static final String SPELL_DEATH_SMOKE      = "devour";
     public static final String SPELL_ANNIHILATION_RAY = "ray_of_siphoning";
+    public static final String SPELL_DANMAKU_BARRAGE  = "danmaku_barrage";
+    public static final String SPELL_GLACIER_STRIKE   = "glacier_strike";
+    public static final String SPELL_EARTHQUAKE       = "earthquake";
 
     public static final String CRYSTAL_REND    = "rending_crystal";
     public static final String CRYSTAL_CULT    = "cult_crystal";
@@ -135,6 +141,10 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
     @Nullable private String currentCastingSpell;
     @Nullable private Player magicMissileBarrageTarget;
     @Nullable private Player charmedTarget;
+    @Nullable private UUID charmTrackingTarget;
+    private int charmTrackingTicks;
+    private boolean charmReady;
+    private final Map<String, Long> nonPlayerDamageTicks = new HashMap<>();
     private int teleportCooldown;
     private int passiveCrystalAnchorCooldown;
     private int lowHealthStarArrowCooldown;
@@ -143,12 +153,17 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
     private int starStrikeWindup;
     private int starStrikeImpactDelay;
     private int starStrikeDomainTicks;
+    private boolean combatDeathTailStarted;
+    private boolean combatDeathTailResolved;
+    private boolean tailHealthWrite;
+    @Nullable private net.minecraft.world.damagesource.DamageSource combatDeathSource;
     private int ultimateCooldown;
 
     // ======================== 构造 ========================
 
     public FinaleEndsustainEntity(EntityType<? extends Monster> type, Level level) {
         super(type, level);
+        getPersistentData().putUUID("EncounterId", encounterId);
         this.xpReward = 5000;
     }
 
@@ -183,6 +198,13 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
     public void clearSleepDamageBonusStacks(UUID player) { sleepDamageBonus.remove(player); }
     void tickSocialPhase() { if (observedHealth <= 0.0F) observedHealth = getHealth(); FinaleEndsustainSocial.tick(this); }
     void tickSleepingSummons() {
+        if (this.level() instanceof ServerLevel server) {
+            qunUIds.removeIf(id -> {
+                Entity entity = server.getEntity(id);
+                return !(entity instanceof QunUEntity qun) || !qun.isAlive() || qun.level() != this.level();
+            });
+            if (qunUIds.isEmpty()) sleepInvulnerable = false;
+        }
         if (this.level() instanceof ServerLevel server && this.tickCount % 10 == 0) {
             double angle = this.tickCount * 0.18D;
             server.sendParticles(ParticleTypes.END_ROD, this.getX() + Math.cos(angle) * 0.45D,
@@ -252,12 +274,20 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
     public void aiStep() {
         super.aiStep();
         this.bossEvent.setProgress(this.getHealth() / this.getMaxHealth());
+        if (!this.level().isClientSide && combatDeathTailStarted) {
+            this.getNavigation().stop();
+            this.setDeltaMovement(Vec3.ZERO);
+            tickLowHealthStarArrows();
+            tickStarArrowTrueKill();
+            return;
+        }
         if (!this.level().isClientSide) {
             tickSocialPhase();
             if (isSleeping()) {
                 tickSleepingSummons();
                 return;
             }
+            if (getSocialPhase() == PHASE_HOSTILE) tickCharmTracking();
         }
         if (!this.level().isClientSide) {
             if (getSocialPhase() == PHASE_HOSTILE && DimensionPhaseManager.tick(this)) return;
@@ -379,9 +409,23 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
 
     // ======================== 受伤瞬移 ========================
 
+    private boolean isNonPlayerDamageThrottled(net.minecraft.world.damagesource.DamageSource source) {
+        long now = this.level().getGameTime();
+        Entity sourceEntity = source.getEntity();
+        String key = sourceEntity != null
+                ? "entity:" + sourceEntity.getUUID()
+                : "type:" + source.getMsgId();
+        long window = sourceEntity != null ? 10L : 5L;
+        Long previous = nonPlayerDamageTicks.get(key);
+        nonPlayerDamageTicks.put(key, now);
+        return previous != null && now - previous < window;
+    }
+
     @Override
     public boolean hurt(net.minecraft.world.damagesource.DamageSource source, float amount) {
+        if (DimensionPhaseManager.isTransitioning(this) || combatDeathTailStarted) return false;
         boolean playerDamage = source.getEntity() instanceof Player;
+        if (!playerDamage && isNonPlayerDamageThrottled(source)) return false;
         boolean playerProjectile = source.getDirectEntity() instanceof net.minecraft.world.entity.projectile.Projectile
                 && playerDamage;
         if (getSocialPhase() == PHASE_NEUTRAL) {
@@ -422,6 +466,51 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
         return super.hurt(source, resistedAmount);
     }
 
+    private boolean isValidBossTarget(Entity entity) {
+        return entity != this
+                && entity.isAlive()
+                && entity.level() == this.level()
+                && !(entity instanceof com.endsustain.entity.companion.SmallZhanjiangCompanionEntity)
+                && (!(entity instanceof Player player) || !player.isSpectator());
+    }
+
+    private boolean isWithinFollowRange(LivingEntity target) {
+        if (!isValidBossTarget(target)) return false;
+        double range = this.getAttributeValue(Attributes.FOLLOW_RANGE);
+        return this.distanceToSqr(target) <= range * range;
+    }
+
+    private void tickCharmTracking() {
+        int state = getAttackState();
+        if (state == STATE_CHARM || state == STATE_ULT_RAISE
+                || state == STATE_ULT_DASH || state == STATE_ULT_SHEATHE) return;
+        Player target = findNearestPlayerInFollowRange();
+        if (target == null) {
+            charmTrackingTarget = null;
+            charmTrackingTicks = 0;
+            charmReady = false;
+            return;
+        }
+        UUID id = target.getUUID();
+        if (!id.equals(charmTrackingTarget)) {
+            charmTrackingTarget = id;
+            charmTrackingTicks = 0;
+            charmReady = false;
+        }
+        if (++charmTrackingTicks >= 12000) charmReady = true;
+    }
+
+    public boolean isCharmReadyFor(Player target) {
+        return charmReady && target != null && charmTrackingTarget != null
+                && charmTrackingTarget.equals(target.getUUID()) && isWithinFollowRange(target);
+    }
+
+    private void resetCharmTracking() {
+        charmTrackingTarget = null;
+        charmTrackingTicks = 0;
+        charmReady = false;
+    }
+
     @Nullable
     public Player findNearestPlayerInFollowRange() {
         double followRange = this.getAttributeValue(Attributes.FOLLOW_RANGE);
@@ -441,7 +530,7 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
     }
 
     public boolean teleportNearTarget(LivingEntity target, double preferredDistance) {
-        if (target == null || !target.isAlive() || target.level() != this.level() || this.teleportCooldown > 0) return false;
+        if (!isWithinFollowRange(target) || this.teleportCooldown > 0) return false;
         net.minecraft.util.RandomSource rng = this.random;
         for (int attempt = 0; attempt < 24; attempt++) {
             double angle = rng.nextDouble() * Math.PI * 2.0D;
@@ -454,7 +543,10 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
                 net.minecraft.core.BlockPos bp = net.minecraft.core.BlockPos.containing(tx, ty, tz);
                 if (this.level().getBlockState(bp).isSolid()
                         && this.level().isEmptyBlock(bp.above())
-                        && this.level().isEmptyBlock(bp.above(2))) {
+                        && this.level().isEmptyBlock(bp.above(2))
+                        && Math.sqrt((tx - target.getX()) * (tx - target.getX())
+                                + (tz - target.getZ()) * (tz - target.getZ()))
+                                <= this.getAttributeValue(Attributes.FOLLOW_RANGE)) {
                     this.getNavigation().stop();
                     this.teleportTo(tx, bp.above().getY() + 0.01, tz);
                     this.teleportCooldown = 20;
@@ -554,7 +646,8 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
 
     public String pickIronSpell() {
         String[] pool = { SPELL_BLACK_HOLE, SPELL_MAGIC_MISSILE, SPELL_STARFALL,
-                          SPELL_CHAOS_FLAME, SPELL_DEATH_SMOKE, SPELL_ANNIHILATION_RAY };
+                          SPELL_CHAOS_FLAME, SPELL_DEATH_SMOKE, SPELL_ANNIHILATION_RAY,
+                          SPELL_DANMAKU_BARRAGE, SPELL_GLACIER_STRIKE, SPELL_EARTHQUAKE };
         return pool[this.random.nextInt(pool.length)];
     }
 
@@ -576,6 +669,7 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
             return;
         }
         startCharmUltimateCooldown();
+        resetCharmTracking();
         snapBossToGround();
         this.charmedTarget = target;
         randomizeCastAnimation();
@@ -666,35 +760,15 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
     // ========================================================================
 
     private void tickLowHealthStarArrows() {
-        if (this.getHealth() >= this.getMaxHealth() * 0.15F) return;
-        if (!(this.level() instanceof ServerLevel server)) return;
-
-        if (this.pendingStarStrikePos != null) {
-            this.getNavigation().stop();
-            this.setDeltaMovement(Vec3.ZERO);
-            this.hurtMarked = true;
-            renderStarStrikeRing(server, this.pendingStarStrikePos, 20.0D);
-            if (this.starStrikeWindup > 0 && --this.starStrikeWindup == 0) {
-                fireDescendingStarArrows(this.pendingStarStrikePos);
-                this.pendingStarStrikePos = null;
-            }
-            return;
+        if (!(this.level() instanceof ServerLevel server) || this.pendingStarStrikePos == null) return;
+        this.getNavigation().stop();
+        this.setDeltaMovement(Vec3.ZERO);
+        this.hurtMarked = true;
+        renderStarStrikeRing(server, this.pendingStarStrikePos, 20.0D);
+        if (this.starStrikeWindup > 0 && --this.starStrikeWindup == 0) {
+            fireDescendingStarArrows(this.pendingStarStrikePos);
+            this.pendingStarStrikePos = null;
         }
-
-        if (this.lowHealthStarArrowCooldown > 0) {
-            this.lowHealthStarArrowCooldown--;
-            return;
-        }
-        Player target = findNearestPlayerInFollowRange();
-        if (target == null || this.distanceToSqr(target) > 20.0D * 20.0D) return;
-        this.lowHealthStarArrowCooldown = 120;
-        this.pendingStarStrikePos = this.position();
-        this.starStrikeWindup = 30;
-        this.starStrikeImpactDelay = 0;
-        com.endsustain.EndSustain.LOGGER.info("[终焉维系] 尾杀领域已展开：中心={}，半径=20，领域内玩家={}",
-                this.pendingStarStrikePos, target.getGameProfile().getName());
-        server.playSound(null, target.blockPosition(), SoundEvents.BEACON_ACTIVATE,
-                this.getSoundSource(), 1.8F, 1.7F);
     }
 
     private void renderStarStrikeRing(ServerLevel server, Vec3 center, double radius) {
@@ -711,14 +785,14 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
 
     private void fireDescendingStarArrows(Vec3 center) {
         if (!(this.level() instanceof ServerLevel server)) return;
+        this.starStrikeDomainCenter = center;
+        this.starStrikeDomainTicks = 200;
         EntityType<?> starArrowType = ForgeRegistries.ENTITY_TYPES.getValue(
                 new ResourceLocation("revelationfix", "star_arrow"));
         if (starArrowType == null) {
             com.endsustain.EndSustain.LOGGER.error("[终焉维系] 找不到 revelationfix:star_arrow，尾杀未生成弹体");
             return;
         }
-        this.starStrikeDomainCenter = center;
-        this.starStrikeDomainTicks = 100;
         int spawned = 0;
         for (int direction = 0; direction < 8; direction++) {
             double angle = Math.PI * 2.0D * direction / 8.0D;
@@ -763,89 +837,28 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
                 this.getSoundSource(), 2.4F, 0.55F);
     }
 
-    @Nullable
-    private net.minecraft.world.entity.Entity createRevelationStarProjectile(ServerLevel server, Vec3 spawn, Vec3 direction, Player target) {
-        // 游戏内该实体显示为 revelationfix 所属时，优先从运行时注册表查找该命名空间的候选实体。
-        // Goety Revelation 2.3.1 的源码包里没有公开 ModEntityType 字段，因此这里不能只依赖反射类名。
-        String[] candidates = {
-                "star_arrow",
-                "quietus_bolt",
-                "quietus_star",
-                "star_bolt",
-                "star",
-                "stellar_bolt",
-                "cosmic_bolt",
-                "nether_star"
-        };
-        for (String id : candidates) {
-            try {
-                EntityType<?> type = ForgeRegistries.ENTITY_TYPES.getValue(new ResourceLocation("revelationfix", id));
-                if (type == null) continue;
-                net.minecraft.world.entity.Entity entity = type.create(server);
-                if (entity != null) {
-                    initializeRevelationStarProjectile(entity, spawn, direction, target);
-                    com.endsustain.EndSustain.LOGGER.debug("[终焉维系] 使用 revelationfix:{} 生成星辰之矢", id);
-                    return entity;
-                }
-            } catch (Throwable ignored) {
-                // 尝试下一个候选实体 ID。
-            }
+    private void finalizeCombatDeath() {
+        if (combatDeathTailResolved) return;
+        combatDeathTailResolved = true;
+        combatDeathTailStarted = false;
+        TrueKillUtil.cancelPending(this);
+        getPersistentData().remove(TrueKillUtil.TERMINAL_STATE_KEY);
+        getPersistentData().putBoolean("EndsustainCombatDeathFinalizing", true);
+        if (this.level() instanceof ServerLevel server) {
+            server.getEntities(this, this.getBoundingBox().inflate(96.0D),
+                    entity -> entity.getTags().contains("endsustain_tail_kill_star_arrow"))
+                    .forEach(Entity::discard);
         }
-
-        try {
-            Class<?> goetyEntityTypes = Class.forName("com.Polarice3.Goety.common.entities.ModEntityType");
-            Object magicBoltReg = goetyEntityTypes.getField("MAGIC_BOLT").get(null);
-            Object magicBoltType = Class.forName("net.minecraftforge.registries.RegistryObject")
-                    .getMethod("get")
-                    .invoke(magicBoltReg);
-
-            Class<?> quietusBoltClass = Class.forName("z1gned.goetyrevelation.entitiy.QuietusBolt");
-            Object bolt = quietusBoltClass
-                    .getConstructor(net.minecraft.world.entity.EntityType.class, Level.class)
-                    .newInstance(magicBoltType, server);
-            if (bolt instanceof net.minecraft.world.entity.Entity entity) {
-                initializeRevelationStarProjectile(entity, spawn, direction, target);
-                return entity;
-            }
-        } catch (Throwable ignored) {
-            // 未加载 Goety Revelation 或构造失败时使用兜底可见弹体。
-        }
-        return null;
-    }
-
-    private void initializeRevelationStarProjectile(net.minecraft.world.entity.Entity entity, Vec3 spawn, Vec3 direction, Player target) {
-        entity.setPos(spawn.x, spawn.y, spawn.z);
-        entity.addTag("endsustain_star_arrow");
-        Vec3 normalizedDirection = direction.normalize();
-        if (entity instanceof net.minecraft.world.entity.projectile.Projectile projectile) {
-            projectile.setOwner(this);
-            projectile.shoot(normalizedDirection.x, normalizedDirection.y, normalizedDirection.z, 2.8F, 0.0F);
-        } else {
-            entity.setDeltaMovement(normalizedDirection.scale(2.8D));
-        }
-        if (entity instanceof net.minecraft.world.entity.projectile.AbstractArrow arrow) {
-            arrow.setBaseDamage(28.0D);
-            arrow.pickup = net.minecraft.world.entity.projectile.AbstractArrow.Pickup.DISALLOWED;
-            arrow.setPierceLevel((byte) 0);
-            arrow.setCritArrow(true);
-        }
-        try {
-            entity.getClass().getMethod("setTarget", LivingEntity.class).invoke(entity, target);
-        } catch (Throwable ignored) {}
-        try {
-            entity.getClass().getMethod("setExtraDamage", float.class).invoke(entity, 12.0F);
-        } catch (Throwable ignored) {}
-        try {
-            entity.getClass().getMethod("setDamage", float.class).invoke(entity, 12.0F);
-        } catch (Throwable ignored) {}
-        try {
-            entity.getClass().getMethod("setExtraDuration", int.class).invoke(entity, 80);
-        } catch (Throwable ignored) {}
-        entity.hurtMarked = true;
+        super.die(combatDeathSource != null ? combatDeathSource : this.damageSources().fellOutOfWorld());
     }
 
     private void tickStarArrowTrueKill() {
         if (!(this.level() instanceof ServerLevel server)) return;
+        if (combatDeathTailStarted && !combatDeathTailResolved
+                && starStrikeDomainCenter != null && starStrikeDomainTicks <= 0) {
+            finalizeCombatDeath();
+            return;
+        }
         if (this.starStrikeDomainCenter == null || this.starStrikeDomainTicks-- <= 0) {
             this.starStrikeDomainCenter = null;
             return;
@@ -870,7 +883,10 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
             for (net.minecraft.world.entity.Entity starArrow : starArrows) {
                 double auraX = player.getX() - starArrow.getX();
                 double auraZ = player.getZ() - starArrow.getZ();
-                if (auraX * auraX + auraZ * auraZ <= 6.0D * 6.0D) {
+                boolean descendedToBattlefield = starArrow.getY() <= this.starStrikeDomainCenter.y + 6.0D;
+                boolean verticallyNearPlayer = Math.abs(player.getY() - starArrow.getY()) <= 6.0D;
+                if (descendedToBattlefield && verticallyNearPlayer
+                        && auraX * auraX + auraZ * auraZ <= 6.0D * 6.0D) {
                     com.endsustain.EndSustain.LOGGER.info(
                             "[终焉维系] 星辰矢 6 格强杀领域命中玩家：{}，箭体坐标={}",
                             player.getGameProfile().getName(), starArrow.position());
@@ -885,39 +901,6 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
                 }
             }
         }
-    }
-
-    public void fireStarArrowsAt(Player target) {
-        if (!(this.level() instanceof ServerLevel server) || target == null || !target.isAlive() || target.level() != this.level()) return;
-        for (int i = 0; i < 10; i++) {
-            double ox = (this.random.nextDouble() - 0.5D) * 1.5D;
-            double oz = (this.random.nextDouble() - 0.5D) * 1.5D;
-            Vec3 spawn = new Vec3(this.getX() + ox, this.getEyeY() + 0.25D + i * 0.03D, this.getZ() + oz);
-            Vec3 aim = target.getEyePosition().add(
-                    (this.random.nextDouble() - 0.5D) * 0.8D,
-                    (this.random.nextDouble() - 0.5D) * 0.5D,
-                    (this.random.nextDouble() - 0.5D) * 0.8D)
-                    .subtract(spawn)
-                    .normalize();
-            net.minecraft.world.entity.Entity star = createRevelationStarProjectile(server, spawn, aim, target);
-            if (star != null) {
-                server.addFreshEntity(star);
-            } else {
-                net.minecraft.world.entity.projectile.SpectralArrow arrow = net.minecraft.world.entity.EntityType.SPECTRAL_ARROW.create(server);
-                if (arrow == null) continue;
-                arrow.setOwner(this);
-                arrow.setPos(spawn.x, spawn.y, spawn.z);
-                arrow.shoot(aim.x, aim.y, aim.z, 3.0F, 0.2F);
-                arrow.setBaseDamage(28.0D);
-                arrow.pickup = net.minecraft.world.entity.projectile.AbstractArrow.Pickup.DISALLOWED;
-                server.addFreshEntity(arrow);
-            }
-        }
-        server.sendParticles(net.minecraft.core.particles.ParticleTypes.END_ROD,
-                this.getX(), this.getEyeY(), this.getZ(), 40, 0.7D, 0.7D, 0.7D, 0.12D);
-        server.playSound(null, this.getX(), this.getY(), this.getZ(),
-                net.minecraft.sounds.SoundEvents.AMETHYST_CLUSTER_BREAK,
-                this.getSoundSource(), 2.0F, 1.6F);
     }
 
     // ========================================================================
@@ -941,7 +924,7 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
     private LivingEntity findPassiveExplosionTarget() {
         var box = this.getBoundingBox().inflate(16.0D);
         java.util.List<LivingEntity> living = this.level().getEntitiesOfClass(LivingEntity.class, box,
-                e -> e.isAlive() && e != this && !(e instanceof Player) && !e.isSpectator());
+                e -> isValidBossTarget(e) && !(e instanceof Player));
         if (living.isEmpty()) return null;
         living.sort(java.util.Comparator.comparingDouble(this::distanceToSqr));
         return living.get(0);
@@ -1058,6 +1041,21 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
             return;
         }
 
+        if (SPELL_DANMAKU_BARRAGE.equals(spellId)) {
+            castDanmakuBarrage(target);
+            return;
+        }
+
+        if (SPELL_GLACIER_STRIKE.equals(spellId)) {
+            castGlacierStrike(target);
+            return;
+        }
+
+        if (SPELL_EARTHQUAKE.equals(spellId)) {
+            castEarthquake(target);
+            return;
+        }
+
         if (SPELL_STARFALL.equals(spellId)) {
             // Iron's Spellbooks 的星海落瀑在部分环境中只显示目标区域，不生成实际降落伤害实体。
             // 因此无论原 API 是否成功，都额外生成一批原生下落法术实体作为可靠伤害补偿。
@@ -1076,6 +1074,89 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
             server.playSound(null, this.getX(), this.getY(), this.getZ(),
                     net.minecraft.sounds.SoundEvents.EVOKER_CAST_SPELL,
                     this.getSoundSource(), 2.0F, 0.8F + this.random.nextFloat() * 0.4F);
+        }
+    }
+
+    private void castDanmakuBarrage(Player target) {
+        if (!(this.level() instanceof ServerLevel) || target == null || !target.isAlive()) return;
+        try {
+            Class<?> shootClass = Class.forName(
+                    "com.github.tartaricacid.touhoulittlemaid.entity.projectile.DanmakuShoot");
+            Class<?> colorClass = Class.forName(
+                    "com.github.tartaricacid.touhoulittlemaid.entity.projectile.DanmakuColor");
+            Class<?> typeClass = Class.forName(
+                    "com.github.tartaricacid.touhoulittlemaid.entity.projectile.DanmakuType");
+            Object shoot = shootClass.getMethod("create").invoke(null);
+            Object purple = java.lang.Enum.valueOf((Class) colorClass, "PURPLE");
+            Object bigBall = java.lang.Enum.valueOf((Class) typeClass, "BIG_BALL");
+            shootClass.getMethod("setWorld", Level.class).invoke(shoot, this.level());
+            shootClass.getMethod("setThrower", LivingEntity.class).invoke(shoot, this);
+            shootClass.getMethod("setTarget", LivingEntity.class).invoke(shoot, target);
+            shootClass.getMethod("setColor", colorClass).invoke(shoot, purple);
+            shootClass.getMethod("setType", typeClass).invoke(shoot, bigBall);
+            shootClass.getMethod("setDamage", float.class).invoke(shoot, 1000.0F);
+            shootClass.getMethod("setVelocity", float.class).invoke(shoot, 1.8F);
+            shootClass.getMethod("setInaccuracy", float.class).invoke(shoot, 0.0F);
+            shootClass.getMethod("setGravity", float.class).invoke(shoot, 0.0F);
+            shootClass.getMethod("setFanNum", int.class).invoke(shoot, 4);
+            shootClass.getMethod("setYawTotal", double.class).invoke(shoot, 12.0D);
+            shootClass.getMethod("fanShapedShot").invoke(shoot);
+            if (this.level() instanceof ServerLevel server) {
+                server.sendParticles(ParticleTypes.WITCH, this.getX(), this.getEyeY(), this.getZ(),
+                        32, 0.6D, 0.45D, 0.6D, 0.12D);
+                server.playSound(null, this.blockPosition(), SoundEvents.EVOKER_CAST_SPELL,
+                        this.getSoundSource(), 1.8F, 1.25F);
+            }
+        } catch (Throwable exception) {
+            com.endsustain.EndSustain.LOGGER.warn("车万女仆弹幕攻击调用失败", exception);
+        }
+    }
+
+    private void castGlacierStrike(Player target) {
+        if (!(this.level() instanceof ServerLevel server) || target == null || !target.isAlive()) return;
+        try {
+            Class<?> glacierClass = Class.forName(
+                    "com.rinko1231.peyroscythe.spellentity.ice.GlacierIceBlockProjectile");
+            Object created = glacierClass
+                    .getConstructor(Level.class, LivingEntity.class, LivingEntity.class)
+                    .newInstance(server, this, target);
+            if (!(created instanceof Entity glacier)) return;
+            glacier.setPos(target.getX(), target.getY() + 20.0D, target.getZ());
+            glacier.setDeltaMovement(0.0D, -2.4D, 0.0D);
+            if (glacier instanceof net.minecraft.world.entity.projectile.Projectile projectile) {
+                projectile.setOwner(this);
+            }
+            glacierClass.getMethod("setScaleFactor", float.class).invoke(glacier, 2.0F);
+            glacier.hurtMarked = true;
+            server.addFreshEntity(glacier);
+            server.sendParticles(ParticleTypes.SNOWFLAKE, target.getX(), target.getY() + 12.0D,
+                    target.getZ(), 80, 2.0D, 7.0D, 2.0D, 0.08D);
+            server.playSound(null, target.blockPosition(), SoundEvents.GLASS_BREAK,
+                    this.getSoundSource(), 2.0F, 0.55F);
+        } catch (Throwable exception) {
+            com.endsustain.EndSustain.LOGGER.warn("PeyroScythe 冰山撞击调用失败", exception);
+        }
+    }
+
+    private void castEarthquake(Player target) {
+        if (!(this.level() instanceof ServerLevel server) || target == null || !target.isAlive()) return;
+        try {
+            Class<?> earthquakeClass = Class.forName(
+                    "io.redspace.ironsspellbooks.entity.spells.EarthquakeAoe");
+            Object created = earthquakeClass.getConstructor(Level.class).newInstance(server);
+            if (!(created instanceof Entity earthquake)) return;
+            earthquake.setPos(target.getX(), target.getY(), target.getZ());
+            if (earthquake instanceof net.minecraft.world.entity.projectile.Projectile projectile) {
+                projectile.setOwner(this);
+            }
+            earthquakeClass.getMethod("setDamage", float.class).invoke(earthquake, 80.0F);
+            earthquakeClass.getMethod("setRadius", float.class).invoke(earthquake, 8.0F);
+            earthquakeClass.getMethod("setDuration", int.class).invoke(earthquake, 100);
+            earthquakeClass.getMethod("setEffectDuration", int.class).invoke(earthquake, 80);
+            earthquakeClass.getMethod("setSlownessAmplifier", int.class).invoke(earthquake, 3);
+            server.addFreshEntity(earthquake);
+        } catch (Throwable exception) {
+            com.endsustain.EndSustain.LOGGER.warn("Iron's Spellbooks 地震调用失败", exception);
         }
     }
 
@@ -1204,10 +1285,7 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
     }
 
     public void beginUltimate(Player target) {
-        if (!canBeginCharmOrUltimate()) return;
-        if (target == null || !target.isAlive() || target.level() != this.level()) return;
-        startCharmUltimateCooldown();
-        startUltimateSequence(target);
+        beginCharm(target);
     }
 
     private void startUltimateSequence(Player target) {
@@ -1245,6 +1323,7 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
                     this.ultLockedPos = null;
                     this.ultEntryPos = null;
                     this.ultExitPos = null;
+                    resetCharmTracking();
                     this.setInvulnerable(false);
                     this.bossEvent.setColor(BossEvent.BossBarColor.PURPLE);
                 }
@@ -1339,5 +1418,75 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
     private void forceTrueKill(Player target) {
         TrueKillUtil.forceKill(target, this.damageSources().fellOutOfWorld(), this,
                 (float) Integer.MAX_VALUE, false);
+    }
+
+    public UUID getEncounterId() { return encounterId; }
+    public int getOfficialPhase() { return officialPhase; }
+    public void setOfficialPhase(int phase) { officialPhase = phase; }
+
+    @Override
+    public void addAdditionalSaveData(CompoundTag tag) {
+        super.addAdditionalSaveData(tag);
+        tag.putUUID("EncounterId", encounterId);
+        tag.putInt("OfficialPhase", officialPhase);
+        tag.putBoolean("EndsustainDropsGranted", getPersistentData().getBoolean("EndsustainDropsGranted"));
+    }
+
+    @Override
+    public void readAdditionalSaveData(CompoundTag tag) {
+        super.readAdditionalSaveData(tag);
+        if (tag.hasUUID("EncounterId")) encounterId = tag.getUUID("EncounterId");
+        officialPhase = tag.getInt("OfficialPhase");
+        if (tag.getBoolean("EndsustainDropsGranted")) getPersistentData().putBoolean("EndsustainDropsGranted", true);
+    }
+
+    @Override
+    public boolean isAlive() {
+        return combatDeathTailStarted && !combatDeathTailResolved || super.isAlive();
+    }
+
+    @Override
+    public void setHealth(float health) {
+        if (DimensionPhaseManager.isTransitioning(this) && health != this.getHealth()) return;
+        if (combatDeathTailStarted && !combatDeathTailResolved && !tailHealthWrite) return;
+        super.setHealth(health);
+    }
+
+    @Override
+    public void heal(float amount) {
+        if (DimensionPhaseManager.isTransitioning(this) || combatDeathTailStarted) return;
+        super.heal(amount);
+    }
+
+    public boolean beginCombatDeathTail(net.minecraft.world.damagesource.DamageSource source) {
+        if (DimensionPhaseManager.isTransitioning(this) || combatDeathTailResolved) return false;
+        if (combatDeathTailStarted) return true;
+        TrueKillUtil.cancelPending(this);
+        getPersistentData().remove(TrueKillUtil.TERMINAL_STATE_KEY);
+        combatDeathTailStarted = true;
+        getPersistentData().putBoolean("EndsustainTailKillUsed", true);
+        combatDeathSource = source;
+        tailHealthWrite = true;
+        this.setHealth(0.0F);
+        tailHealthWrite = false;
+        this.pendingStarStrikePos = this.position();
+        this.starStrikeWindup = 30;
+        this.setAttackState(STATE_IDLE);
+        this.setAttackTick(0);
+        this.setInvulnerable(true);
+        this.getNavigation().stop();
+        this.setDeltaMovement(Vec3.ZERO);
+        com.endsustain.EndSustain.LOGGER.info("[终焉维系] Boss 已进入死亡后尾杀：30 Tick 后释放星辰矢");
+        return true;
+    }
+
+    @Override
+    public void die(net.minecraft.world.damagesource.DamageSource source) {
+        if (DimensionPhaseManager.isTransitioning(this)) return;
+        boolean combatSource = source.getEntity() instanceof Player || source.getEntity() == this
+                || source.getDirectEntity() instanceof EndsustainBladeEntity;
+        if (combatSource && beginCombatDeathTail(source)) return;
+        if (combatDeathTailStarted && !combatDeathTailResolved) return;
+        super.die(source);
     }
 }

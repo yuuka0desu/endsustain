@@ -130,8 +130,8 @@ public class EndsustainBladeEntity extends Projectile implements ItemSupplier {
                 this.onHit(hit);
                 return;
             }
-            // 玩家投掷的终焉之刃飞行超过 10 秒后，直接强制放回物品栏。
-            if (this.playerChargedThrow && this.tickCount > 200 && this.ownerLiving instanceof Player player) {
+            // 玩家投掷的终焉之刃飞行超过 30 秒后，直接强制放回物品栏。
+            if (this.playerChargedThrow && this.tickCount > 600 && this.ownerLiving instanceof Player player) {
                 returnToOwnerInventory(player);
                 this.discard();
                 return;
