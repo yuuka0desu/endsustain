@@ -34,7 +34,7 @@ public class ModEntities {
     public static final RegistryObject<EntityType<SmallZhanjiangCompanionEntity>> SMALL_ZHANJIANG_COMPANION =
             ENTITIES.register("small_zhanjiang_companion", () -> EntityType.Builder
                     .<SmallZhanjiangCompanionEntity>of(SmallZhanjiangCompanionEntity::new, MobCategory.MISC)
-                    .sized(0.2F, 0.45F).noSave().noSummon().fireImmune()
+                    .sized(0.0F, 0.0F).noSave().noSummon().fireImmune()
                     .clientTrackingRange(64).updateInterval(1).build("small_zhanjiang_companion"));
 
     // 终焉之刃投射物

@@ -9,10 +9,12 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntityDimensions;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.HumanoidArm;
 import net.minecraft.world.entity.PathfinderMob;
+import net.minecraft.world.entity.Pose;
 import net.minecraft.world.entity.ai.attributes.AttributeSupplier;
 import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.player.Player;
@@ -28,6 +30,7 @@ import software.bernie.geckolib.util.GeckoLibUtil;
 import java.util.UUID;
 
 public class SmallZhanjiangCompanionEntity extends PathfinderMob implements GeoEntity {
+    private static final EntityDimensions MARKER_DIMENSIONS = EntityDimensions.fixed(0.0F, 0.0F);
     private final AnimatableInstanceCache cache = GeckoLibUtil.createInstanceCache(this);
     private UUID ownerUuid;
 
@@ -37,6 +40,9 @@ public class SmallZhanjiangCompanionEntity extends PathfinderMob implements GeoE
     }
 
     public static AttributeSupplier.Builder createAttributes() { return Mob.createMobAttributes(); }
+
+    @Override public EntityDimensions getDimensions(Pose pose) { return MARKER_DIMENSIONS; }
+    @Override public boolean canCollideWith(Entity entity) { return false; }
 
     @Override protected void defineSynchedData() { super.defineSynchedData(); }
     public UUID getOwnerUuid() { return ownerUuid; }

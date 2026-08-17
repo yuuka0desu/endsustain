@@ -3,7 +3,6 @@ package com.endsustain.item;
 import com.endsustain.entity.projectile.IlusiAteProjectileEntity;
 import com.google.common.collect.ImmutableMultimap;
 import com.google.common.collect.Multimap;
-import net.minecraft.network.chat.Component;
 import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.InteractionHand;
@@ -15,11 +14,9 @@ import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.TooltipFlag;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 
-import java.util.List;
 
 public class IlusiAteItem extends Item {
     private final Multimap<Attribute, AttributeModifier> mainHandModifiers;
@@ -57,9 +54,4 @@ public class IlusiAteItem extends Item {
         return slot == EquipmentSlot.MAINHAND ? this.mainHandModifiers : super.getDefaultAttributeModifiers(slot);
     }
 
-    @Override
-    public void appendHoverText(ItemStack stack, Level level, List<Component> tooltip, TooltipFlag flag) {
-        tooltip.add(Component.literal("！？白色系外冷内齁杂鱼傲娇雌小鬼小男娘？！"));
-        tooltip.add(Component.literal("使用行为：投掷后在落点召唤三个自动追踪敌对生物的三叉戟"));
-    }
 }

@@ -3,7 +3,6 @@ package com.endsustain.event;
 import com.endsustain.EndSustain;
 import com.endsustain.combat.TrueKillUtil;
 import com.endsustain.compat.CompatHandler;
-import com.endsustain.compat.ysm.YsmCompat;
 import com.endsustain.entity.boss.EndsustainBladeEntity;
 import com.endsustain.entity.boss.FinaleEndsustainEntity;
 import com.endsustain.entity.boss.SpellProjectile;
@@ -15,7 +14,6 @@ import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.world.InteractionResult;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
@@ -64,6 +62,7 @@ public class ForgeBusEvents {
     public static void onServerTick(TickEvent.ServerTickEvent event) {
         if (event.phase == TickEvent.Phase.END) {
             TrueKillUtil.tickPendingDeaths(event.getServer());
+            com.endsustain.combat.TimeStopManager.tick(event.getServer());
         }
     }
 
@@ -94,26 +93,6 @@ public class ForgeBusEvents {
             player.drop(blessing, false);
         }
         player.sendSystemMessage(Component.literal("VOODOM 感受到了你的呼唤。"));
-    }
-
-    @SubscribeEvent
-    public static void onShearZhajiangMaid(PlayerInteractEvent.EntityInteract event) {
-        if (event.getLevel().isClientSide) return;
-        ItemStack shears = event.getItemStack();
-        if (!shears.is(Items.SHEARS)) return;
-        if (!YsmCompat.isZhajiangMaid(event.getTarget())) return;
-
-        Player player = event.getEntity();
-        ItemStack stockings = new ItemStack(ModItems.STOCKINGS.get());
-        if (!player.getInventory().add(stockings)) {
-            player.drop(stockings, false);
-        }
-        if (!player.getAbilities().instabuild) {
-            shears.hurtAndBreak(1, player, broken -> broken.broadcastBreakEvent(event.getHand()));
-        }
-        player.sendSystemMessage(Component.translatable("message.endsustain.stockings_obtained"));
-        event.setCancellationResult(InteractionResult.SUCCESS);
-        event.setCanceled(true);
     }
 
     @SubscribeEvent(priority = EventPriority.LOWEST, receiveCanceled = true)

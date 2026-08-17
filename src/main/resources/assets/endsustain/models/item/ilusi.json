@@ -1,6 +1,6 @@
 {
   "parent": "minecraft:item/generated",
   "textures": {
-    "layer0": "endsustain:item/ilusi"
+    "layer0": "endsustain:item/ilusi_ate"
   }
 }

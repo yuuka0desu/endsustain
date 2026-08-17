@@ -41,7 +41,7 @@ public class ModItems {
     public static final RegistryObject<Item> HAKI_WITCH_PIG_BLESSING = ITEMS.register("voodom_blessing",
             () -> new HakiWitchPigBlessingItem(new Item.Properties().stacksTo(16)));
 
-    // 对使用“末影蘸酱”YSM 模型的女仆使用剪刀获得
+    // 使用白色羊毛按护腿形状合成
     public static final RegistryObject<Item> STOCKINGS = ITEMS.register("stockings",
             () -> new Item(new Item.Properties().stacksTo(64)));
 

@@ -4,6 +4,7 @@ import com.endsustain.EndSustain;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.renderer.LightTexture;
 import net.minecraft.client.renderer.MultiBufferSource;
 import net.minecraft.client.renderer.RenderType;
@@ -13,6 +14,7 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.util.Mth;
 import net.minecraft.world.phys.Vec3;
 import net.minecraftforge.api.distmarker.Dist;
+import net.minecraftforge.client.event.RenderGuiEvent;
 import net.minecraftforge.client.event.RenderLevelStageEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
@@ -29,8 +31,17 @@ public final class FinaleWeatherEvents {
             "bosses_of_mass_destruction", "textures/entity/void_blossom_spike.png");
     private static final List<ClientThornSpike> THORN_SPIKES = new ArrayList<>();
     private static final int THORN_LIFETIME = 10;
+    private static long screenTearUntil;
+    private static long screenTearStart;
 
     private FinaleWeatherEvents() {}
+
+    public static void startScreenTear(int durationTicks) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.level == null) return;
+        screenTearStart = minecraft.level.getGameTime();
+        screenTearUntil = screenTearStart + durationTicks;
+    }
 
     public static void addThornSpikes(List<BlockPos> positions) {
         Minecraft minecraft = Minecraft.getInstance();
@@ -49,6 +60,30 @@ public final class FinaleWeatherEvents {
             FinaleWeatherRenderer.render(event.getPoseStack(), event.getPartialTick(), event.getCamera());
         }
         renderThornSpikes(event);
+    }
+
+    @SubscribeEvent
+    public static void renderScreenTear(RenderGuiEvent.Post event) {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (minecraft.level == null || minecraft.level.getGameTime() >= screenTearUntil) return;
+        float duration = Math.max(1.0F, screenTearUntil - screenTearStart);
+        float age = minecraft.level.getGameTime() - screenTearStart + event.getPartialTick();
+        float intensity = Mth.sin(Math.min(1.0F, age / duration) * Mth.PI);
+        GuiGraphics graphics = event.getGuiGraphics();
+        int width = graphics.guiWidth();
+        int height = graphics.guiHeight();
+        int shade = Math.min(150, Math.round(150.0F * intensity));
+        graphics.fill(0, 0, width, height, shade << 24 | 0x16001F);
+        for (int i = 0; i < 7; i++) {
+            int x = (int) ((i + 0.5D) * width / 7.0D + Math.sin(age * 0.9D + i) * 14.0D);
+            int tearWidth = 2 + (i % 3);
+            graphics.fill(x - tearWidth, 0, x + tearWidth, height, 0xCC6D13A8);
+            graphics.fill(x, 0, x + 1, height, 0xFFF2D7FF);
+        }
+        for (int i = 0; i < 5; i++) {
+            int y = (int) ((i + 1.0D) * height / 6.0D + Math.cos(age + i) * 8.0D);
+            graphics.fill(0, y, width, y + 1, 0x88470070);
+        }
     }
 
     private static void renderThornSpikes(RenderLevelStageEvent event) {

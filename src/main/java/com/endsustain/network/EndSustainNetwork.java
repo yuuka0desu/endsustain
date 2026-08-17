@@ -46,6 +46,9 @@ public final class EndSustainNetwork {
         CHANNEL.registerMessage(5, ThornSpikePacket.class, ThornSpikePacket::encode,
                 ThornSpikePacket::decode, ThornSpikePacket::handle,
                 Optional.of(NetworkDirection.PLAY_TO_CLIENT));
+        CHANNEL.registerMessage(6, ScreenTearPacket.class, ScreenTearPacket::encode,
+                ScreenTearPacket::decode, ScreenTearPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT));
     }
 
     public static void broadcastEnvironment(MinecraftServer server, boolean active) {
@@ -59,6 +62,29 @@ public final class EndSustainNetwork {
     public static void requestFinalePath() { CHANNEL.sendToServer(new FinalePathRequestPacket()); }
     public static void triggerFinaleSkill(int skill) { CHANNEL.sendToServer(new FinaleSkillTriggerPacket(skill)); }
     public static void toggleTidalTentacles() { CHANNEL.sendToServer(new TidalTentacleTogglePacket()); }
+
+    public static void sendScreenTear(ServerLevel level, net.minecraft.world.phys.Vec3 center,
+                                      double radius, int durationTicks) {
+        CHANNEL.send(PacketDistributor.NEAR.with(() -> new PacketDistributor.TargetPoint(
+                center.x, center.y, center.z, radius, level.dimension())),
+                new ScreenTearPacket(durationTicks));
+    }
+
+    public record ScreenTearPacket(int durationTicks) {
+        static void encode(ScreenTearPacket packet, FriendlyByteBuf buffer) {
+            buffer.writeVarInt(packet.durationTicks);
+        }
+
+        static ScreenTearPacket decode(FriendlyByteBuf buffer) {
+            return new ScreenTearPacket(Math.min(100, Math.max(1, buffer.readVarInt())));
+        }
+
+        static void handle(ScreenTearPacket packet, Supplier<NetworkEvent.Context> supplier) {
+            NetworkEvent.Context context = supplier.get();
+            context.enqueueWork(() -> FinaleWeatherEvents.startScreenTear(packet.durationTicks));
+            context.setPacketHandled(true);
+        }
+    }
 
     public static void sendThornSpikes(ServerLevel level, List<BlockPos> positions) {
         if (positions.isEmpty()) return;

@@ -10,7 +10,9 @@
     "ServerChunkCacheMixin",
     "TidalHookEntityMixin",
     "LivingEntityTerminalStateMixin",
-    "ForgeHooksTerminalDeathMixin"
+    "ForgeHooksTerminalDeathMixin",
+    "ServerLevelTimeStopMixin",
+    "ServerGamePacketTimeStopMixin"
   ],
   "client": [
     "LightTextureMixin"
