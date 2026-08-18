@@ -43,7 +43,7 @@ public final class FinalePresenceEffects {
         }
         boolean present = minecraft.level != null && minecraft.player != null
                 && !minecraft.level.getEntitiesOfClass(FinaleEndsustainEntity.class,
-                minecraft.player.getBoundingBox().inflate(256.0D), FinaleEndsustainEntity::isAlive).isEmpty();
+                minecraft.player.getBoundingBox().inflate(256.0D), FinaleEndsustainEntity::isEnvironmentActive).isEmpty();
 
         if (present && !active) {
             minecraft.gameRenderer.loadEffect(FILTER);

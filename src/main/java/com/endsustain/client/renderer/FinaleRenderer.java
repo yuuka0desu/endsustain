@@ -11,6 +11,7 @@ import net.minecraft.client.renderer.entity.EntityRendererProvider;
 import net.minecraft.client.renderer.texture.OverlayTexture;
 import net.minecraft.resources.ResourceLocation;
 import software.bernie.geckolib.cache.object.BakedGeoModel;
+import software.bernie.geckolib.core.animation.AnimationState;
 import software.bernie.geckolib.model.GeoModel;
 import software.bernie.geckolib.renderer.GeoEntityRenderer;
 import software.bernie.geckolib.renderer.layer.GeoRenderLayer;
@@ -62,6 +63,20 @@ public class FinaleRenderer extends GeoEntityRenderer<FinaleEndsustainEntity> {
 
         @Override
         public ResourceLocation getModelResource(FinaleEndsustainEntity entity) { return MODEL; }
+
+        @Override
+        public void handleAnimations(FinaleEndsustainEntity entity, long instanceId,
+                                     AnimationState<FinaleEndsustainEntity> animationState) {
+            super.handleAnimations(entity, instanceId, animationState);
+            if (!entity.isSleeping()) {
+                // 直接覆盖睡眠动画残留的骨骼快照，保证攻击唤醒后眼睛立即恢复。
+                getBone("RightEyesBase").ifPresent(bone -> bone.setScaleY(1.0F));
+                getBone("LeftEyesBase").ifPresent(bone -> bone.setScaleY(1.0F));
+                getBone("RightEyelid").ifPresent(bone -> bone.setScaleY(1.0F));
+                getBone("LeftEyelid").ifPresent(bone -> bone.setScaleY(1.0F));
+                getBone("AllHead").ifPresent(bone -> bone.setRotX(0.0F));
+            }
+        }
 
         @Override
         public ResourceLocation getTextureResource(FinaleEndsustainEntity entity) { return TEXTURE; }

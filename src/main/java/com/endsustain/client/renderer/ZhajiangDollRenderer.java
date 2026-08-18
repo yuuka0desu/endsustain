@@ -22,10 +22,15 @@ public class ZhajiangDollRenderer extends GeoItemRenderer<ZhajiangDollItem> {
         poseStack.pushPose();
         if (displayContext == ItemDisplayContext.GUI) {
             poseStack.translate(0.985D, -0.2925D, 0.0D);
+            poseStack.scale(0.52F, 0.52F, 0.52F);
+        } else if (displayContext == ItemDisplayContext.FIXED) {
+            // 展示框使用固定物品坐标；玩偶模型约 4.5 格可见高度，需要缩小到框内。
+            poseStack.translate(0.5D, 0.08D, 0.0D);
+            poseStack.scale(0.20F, 0.20F, 0.20F);
         } else {
             poseStack.translate(0.36D, 0.02D, 0.0D);
+            poseStack.scale(0.36F, 0.36F, 0.36F);
         }
-        poseStack.scale(0.52F, 0.52F, 0.52F);
         poseStack.mulPose(Axis.YP.rotationDegrees(180.0F));
         super.renderByItem(stack, displayContext, poseStack, bufferSource, packedLight, packedOverlay);
         poseStack.popPose();

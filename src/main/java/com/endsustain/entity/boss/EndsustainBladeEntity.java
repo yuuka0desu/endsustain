@@ -6,6 +6,7 @@ import com.endsustain.item.ModItems;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.protocol.Packet;
 import net.minecraft.network.protocol.game.ClientGamePacketListener;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
@@ -27,13 +28,50 @@ import net.minecraft.world.phys.Vec3;
 import net.minecraftforge.network.NetworkHooks;
 
 import javax.annotation.Nullable;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
 public class EndsustainBladeEntity extends Projectile implements ItemSupplier {
     private static final double HOMING_STRENGTH = 0.22D;
     private static final String CARRIED_STACK_KEY = "CarriedBlade";
+    private static final Map<UUID, BladePresence> PRESENCE = new HashMap<>();
+
+    public static void tickPresence(MinecraftServer server) {
+        Iterator<Map.Entry<UUID, BladePresence>> iterator = PRESENCE.entrySet().iterator();
+        while (iterator.hasNext()) {
+            Map.Entry<UUID, BladePresence> entry = iterator.next();
+            BladePresence presence = entry.getValue();
+            ServerLevel level = server.getLevel(presence.dimension);
+            ServerPlayer owner = server.getPlayerList().getPlayer(presence.ownerUuid);
+            if (level == null || owner == null) {
+                iterator.remove();
+                continue;
+            }
+            Entity blade = level.getEntity(entry.getKey());
+            if (blade != null && !blade.isRemoved()) continue;
+            if (!presence.stack.isEmpty()) {
+                ItemStack returned = presence.stack.copy();
+                if (owner.getMainHandItem().isEmpty()) owner.setItemSlot(EquipmentSlot.MAINHAND, returned);
+                else if (!owner.getInventory().add(returned)) owner.drop(returned, false);
+            }
+            iterator.remove();
+        }
+    }
+
+    private static final class BladePresence {
+        private final net.minecraft.resources.ResourceKey<Level> dimension;
+        private final UUID ownerUuid;
+        private final ItemStack stack;
+        private BladePresence(net.minecraft.resources.ResourceKey<Level> dimension, UUID ownerUuid, ItemStack stack) {
+            this.dimension = dimension;
+            this.ownerUuid = ownerUuid;
+            this.stack = stack;
+        }
+    }
 
     @Nullable private LivingEntity ownerLiving;
     @Nullable private LivingEntity trackedTarget;
@@ -41,6 +79,7 @@ public class EndsustainBladeEntity extends Projectile implements ItemSupplier {
     @Nullable private UUID ownerPlayerUuid;
     private boolean returning;
     private boolean playerChargedThrow;
+    private int playerThrowTicks;
     private int returnCooldown;
     private int returnTicks;
     private int missingOwnerTicks;
@@ -100,6 +139,24 @@ public class EndsustainBladeEntity extends Projectile implements ItemSupplier {
             return;
         }
         this.missingOwnerTicks = 0;
+        if (this.playerChargedThrow && this.ownerLiving instanceof Player player) {
+            if (player.level() != this.level()) {
+                returnToOwnerInventory(player);
+                this.discard();
+                return;
+            }
+            double horizontalDistanceSqr = this.distanceToSqr(player.getX(), this.getY(), player.getZ());
+            if (horizontalDistanceSqr > 128.0D * 128.0D) {
+                returnToOwnerInventory(player);
+                this.discard();
+                return;
+            }
+            if (this.level() instanceof ServerLevel server) {
+                PRESENCE.put(this.getUUID(), new BladePresence(server.dimension(), player.getUUID(),
+                        this.carriedStack.copy()));
+            }
+        }
+        if (this.playerChargedThrow) this.playerThrowTicks++;
         if (!this.ownerLiving.isAlive()) {
             if (this.ownerLiving instanceof Player player) {
                 returnToOwnerInventory(player);
@@ -110,16 +167,13 @@ public class EndsustainBladeEntity extends Projectile implements ItemSupplier {
             return;
         }
 
-        // 忠诚回收兜底：飞出 50 格、跌至 Y<=-64 或跨维度时直接放回玩家物品栏。
-        if (this.ownerLiving instanceof Player player
-                && (player.level() != this.level()
-                || this.distanceToSqr(player) > 2500.0D
-                || this.getY() <= -64.0D)) {
+        // 30 秒前不再因距离或高度打断忠诚返回；到期后才执行一次强制回收。
+        if (this.playerChargedThrow && this.playerThrowTicks >= 600
+                && this.ownerLiving instanceof Player player) {
             returnToOwnerInventory(player);
             this.discard();
             return;
         }
-
         if (this.returning) {
             tickReturn();
         } else {
@@ -128,12 +182,6 @@ public class EndsustainBladeEntity extends Projectile implements ItemSupplier {
             HitResult hit = ProjectileUtil.getHitResultOnMoveVector(this, this::canHitEntity);
             if (hit.getType() != HitResult.Type.MISS) {
                 this.onHit(hit);
-                return;
-            }
-            // 玩家投掷的终焉之刃飞行超过 30 秒后，直接强制放回物品栏。
-            if (this.playerChargedThrow && this.tickCount > 600 && this.ownerLiving instanceof Player player) {
-                returnToOwnerInventory(player);
-                this.discard();
                 return;
             }
             // Boss 发射的刀保留原有生命周期。
@@ -169,8 +217,13 @@ public class EndsustainBladeEntity extends Projectile implements ItemSupplier {
             this.pathKilledEntities.add(target.getUUID());
             boolean overflow = owner instanceof ServerPlayer serverPlayer
                     && com.endsustain.item.weapon.EndsustainBladeItem.hasOverflowDamage(serverPlayer);
-            TrueKillUtil.forceKill(target, this.damageSources().fellOutOfWorld(), owner,
-                    (float) Integer.MAX_VALUE, overflow);
+            if (target instanceof FinaleEndsustainEntity boss && overflow) {
+                net.minecraft.world.damagesource.DamageSource source = this.damageSources().playerAttack(owner);
+                boss.beginCombatDeathTail(source);
+            } else {
+                TrueKillUtil.forceKill(target, this.damageSources().fellOutOfWorld(), owner,
+                        (float) Integer.MAX_VALUE, overflow);
+            }
         }
     }
 
@@ -237,8 +290,11 @@ public class EndsustainBladeEntity extends Projectile implements ItemSupplier {
         }
         Vec3 destination = this.ownerLiving.getEyePosition().subtract(0.0D, 0.25D, 0.0D);
         Vec3 toOwner = destination.subtract(this.position());
-        // 扩大近身吸附范围，并用 40 tick 超时兜底，消除玩家身边来回抽搐。
-        if (toOwner.lengthSqr() < 16.0D || this.returnTicks > 40) {
+        // 玩家投掷物在 30 秒内按忠诚逻辑持续追踪；到期后才允许超时强制回收。
+        boolean forceReturnExpired = this.playerChargedThrow
+                ? this.playerThrowTicks >= 600
+                : this.returnTicks > 40;
+        if (toOwner.lengthSqr() < 16.0D || forceReturnExpired) {
             returnToOwnerInventory();
             this.discard();
             return;
@@ -268,6 +324,12 @@ public class EndsustainBladeEntity extends Projectile implements ItemSupplier {
             this.spawnAtLocation(this.carriedStack.copy());
             this.carriedStack = ItemStack.EMPTY;
         }
+    }
+
+    @Override
+    public void remove(Entity.RemovalReason reason) {
+        if (reason != Entity.RemovalReason.UNLOADED_TO_CHUNK) PRESENCE.remove(this.getUUID());
+        super.remove(reason);
     }
 
     @Override

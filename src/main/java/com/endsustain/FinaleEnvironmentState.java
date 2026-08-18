@@ -26,6 +26,18 @@ public final class FinaleEnvironmentState {
         return active && EndSustainConfig.ENABLE_FINALE_SPAWN_BOOST.get();
     }
 
+    public static void setPresenceState(MinecraftServer server, boolean present) {
+        if (present == active) return;
+        active = present;
+        EndSustainNetwork.broadcastEnvironment(server, present);
+        if (!present) {
+            for (ServerLevel level : server.getAllLevels()) {
+                level.setRainLevel(0.0F);
+                level.setThunderLevel(0.0F);
+            }
+        }
+    }
+
     @SubscribeEvent
     public static void onServerTick(TickEvent.ServerTickEvent event) {
         if (event.phase != TickEvent.Phase.END) return;
@@ -33,8 +45,8 @@ public final class FinaleEnvironmentState {
         boolean present = false;
         for (ServerLevel level : server.getAllLevels()) {
             for (var entity : level.getAllEntities()) {
-                if (entity instanceof FinaleEndsustainEntity finale && finale.isAlive()
-                        && !finale.isRemoved() && level.isLoaded(finale.blockPosition())) {
+                if (entity instanceof FinaleEndsustainEntity finale && finale.isEnvironmentActive()
+                        && level.isLoaded(finale.blockPosition())) {
                     present = true;
                     break;
                 }
@@ -43,8 +55,7 @@ public final class FinaleEnvironmentState {
         }
 
         if (present != active) {
-            active = present;
-            EndSustainNetwork.broadcastEnvironment(server, active);
+            setPresenceState(server, present);
         } else if (active && server.getTickCount() % 40 == 0) {
             EndSustainNetwork.broadcastEnvironment(server, true);
         }

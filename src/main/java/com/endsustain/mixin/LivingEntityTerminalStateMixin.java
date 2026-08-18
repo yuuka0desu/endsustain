@@ -25,6 +25,11 @@ public abstract class LivingEntityTerminalStateMixin implements TerminalDeathSta
         return this.dead;
     }
 
+    @Override
+    public void endsustain$forceDeathTransaction() {
+        this.dead = true;
+    }
+
     @Unique
     private boolean endsustain$terminalState() {
         return ((LivingEntity) (Object) this).getPersistentData()

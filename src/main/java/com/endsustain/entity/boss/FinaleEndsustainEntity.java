@@ -1,6 +1,7 @@
 package com.endsustain.entity.boss;
 
 import com.endsustain.combat.TrueKillUtil;
+import com.endsustain.event.ForgeBusEvents;
 import net.minecraft.core.BlockPos;
 import net.minecraft.network.syncher.EntityDataAccessor;
 import net.minecraft.network.syncher.EntityDataSerializers;
@@ -59,11 +60,17 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
 
     // ======================== GeckoLib 动画接口 ================
     private final AnimatableInstanceCache animCache = GeckoLibUtil.createInstanceCache(this);
+    private boolean animationSleepingState;
 
     @Override
     public void registerControllers(AnimatableManager.ControllerRegistrar controllers) {
         AnimationController<FinaleEndsustainEntity> mainController = new AnimationController<>(this, "main", 0, state -> {
-            if (isSleeping()) {
+            boolean sleeping = isSleeping();
+            if (sleeping != animationSleepingState) {
+                animationSleepingState = sleeping;
+                state.getController().forceAnimationReset();
+            }
+            if (sleeping) {
                 return state.setAndContinue(RawAnimation.begin().thenLoop("animation.sleep"));
             }
             if (getAttackState() == STATE_CASTING || getAttackState() == STATE_CHARM) {
@@ -121,6 +128,8 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
     private final java.util.Set<UUID> qunUIds = new java.util.HashSet<>();
     private final Map<UUID, Integer> sleepDamageBonus = new HashMap<>();
 
+    private static final EntityDataAccessor<Boolean> TAIL_KILL_DOOM =
+            SynchedEntityData.defineId(FinaleEndsustainEntity.class, EntityDataSerializers.BOOLEAN);
     private static final EntityDataAccessor<Integer> ATTACK_STATE =
             SynchedEntityData.defineId(FinaleEndsustainEntity.class, EntityDataSerializers.INT);
     private static final EntityDataAccessor<Integer> ATTACK_TICK =
@@ -187,11 +196,20 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
         this.entityData.define(ATTACK_STATE, STATE_IDLE);
         this.entityData.define(ATTACK_TICK, 0);
         this.entityData.define(CAST_ANIMATION, 0);
+        this.entityData.define(TAIL_KILL_DOOM, false);
     }
 
     public int getSocialPhase() { return this.entityData.get(SOCIAL_PHASE); }
     private void setSocialPhase(int phase) { this.entityData.set(SOCIAL_PHASE, phase); }
     public boolean isSleeping() { return getSocialPhase() == PHASE_SLEEPING; }
+    public void wakeFromPlayerAttack(Player player) {
+        if (!isSleeping() && getSocialPhase() != PHASE_NEUTRAL) {
+            setTarget(player);
+            return;
+        }
+        enterHostileInternal();
+        setTarget(player);
+    }
     public boolean canReceiveDamageNow() { return getSocialPhase() == PHASE_HOSTILE || !sleepInvulnerable; }
     public int getSleepDamageBonusStacks(UUID player) { return sleepDamageBonus.getOrDefault(player, 0); }
     public void addSleepDamageBonus(UUID player) { sleepDamageBonus.merge(player, 1, Integer::sum); }
@@ -203,7 +221,6 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
                 Entity entity = server.getEntity(id);
                 return !(entity instanceof QunUEntity qun) || !qun.isAlive() || qun.level() != this.level();
             });
-            if (qunUIds.isEmpty()) sleepInvulnerable = false;
         }
         if (this.level() instanceof ServerLevel server && this.tickCount % 10 == 0) {
             double angle = this.tickCount * 0.18D;
@@ -218,7 +235,7 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
                         this.getEyeY() + zHeight, this.getZ(), 2, 0.04D, 0.03D, 0.04D, 0.005D);
             }
         }
-        if (++sleepSummonTicks >= 200 || qunUIds.isEmpty()) {
+        if (isSleeping() && ++sleepSummonTicks >= 200) {
             sleepSummonTicks = 0;
             FinaleEndsustainSocial.summon(this);
         }
@@ -232,9 +249,28 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
     int getNeutralHurtInternal() { return neutralHurtTicks; }
     int getNeutralIdleInternal() { return neutralIdleTicks; }
     int incrementNeutralIdleInternal() { return ++neutralIdleTicks; }
-    void enterHostileInternal() { setSocialPhase(PHASE_HOSTILE); neutralIdleTicks = neutralHurtTicks = 0; hitWithoutDamage = false; sleepInvulnerable = false; }
-    void enterSleepingInternal() { setSocialPhase(PHASE_SLEEPING); sleepInvulnerable = true; neutralIdleTicks = neutralHurtTicks = 0; sleepSummonTicks = 0; }
-    public void onQunUKilled(UUID id) { qunUIds.remove(id); if (qunUIds.isEmpty()) sleepInvulnerable = false; }
+    void enterHostileInternal() {
+        setSocialPhase(PHASE_HOSTILE);
+        neutralIdleTicks = neutralHurtTicks = 0;
+        hitWithoutDamage = false;
+        sleepInvulnerable = false;
+        sleepSummonTicks = 0;
+        setAttackState(STATE_IDLE);
+        if (getTarget() == null || !getTarget().isAlive()) {
+            Player nearest = findNearestPlayerInFollowRange();
+            if (nearest != null) setTarget(nearest);
+        }
+    }
+    void enterSleepingInternal() {
+        setSocialPhase(PHASE_SLEEPING);
+        sleepInvulnerable = true;
+        neutralIdleTicks = neutralHurtTicks = 0;
+        sleepSummonTicks = 0;
+    }
+    public void onQunUKilled(UUID id) {
+        qunUIds.remove(id);
+        if (isSleeping()) sleepInvulnerable = false;
+    }
     public int  getAttackState()      { return this.entityData.get(ATTACK_STATE); }
     public void setAttackState(int s) { this.entityData.set(ATTACK_STATE, s); }
     public int  getAttackTick()       { return this.entityData.get(ATTACK_TICK); }
@@ -274,6 +310,7 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
     public void aiStep() {
         super.aiStep();
         this.bossEvent.setProgress(this.getHealth() / this.getMaxHealth());
+        if (!this.level().isClientSide) ForgeBusEvents.observeFinaleBoss(this);
         if (!this.level().isClientSide && combatDeathTailStarted) {
             this.getNavigation().stop();
             this.setDeltaMovement(Vec3.ZERO);
@@ -431,15 +468,18 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
         if (getSocialPhase() == PHASE_NEUTRAL) {
             if (playerDamage) {
                 enterHostileInternal();
+                if (source.getEntity() instanceof LivingEntity attacker) setTarget(attacker);
             } else {
                 hitWithoutDamage = true;
                 neutralHurtTicks = 0;
                 return false;
             }
         }
-        if (getSocialPhase() == PHASE_SLEEPING && sleepInvulnerable) {
+        if (getSocialPhase() == PHASE_SLEEPING) {
             if (!playerDamage) return false;
             sleepInvulnerable = false;
+            enterHostileInternal();
+            if (source.getEntity() instanceof LivingEntity attacker) setTarget(attacker);
         }
         if (getAttackState() == STATE_CHARM && !playerDamage) {
             return false;
@@ -882,20 +922,14 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
             if (domainX * domainX + domainZ * domainZ > 20.0D * 20.0D) continue;
             for (net.minecraft.world.entity.Entity starArrow : starArrows) {
                 double auraX = player.getX() - starArrow.getX();
+                double auraY = player.getY() - starArrow.getY();
                 double auraZ = player.getZ() - starArrow.getZ();
-                boolean descendedToBattlefield = starArrow.getY() <= this.starStrikeDomainCenter.y + 6.0D;
-                boolean verticallyNearPlayer = Math.abs(player.getY() - starArrow.getY()) <= 6.0D;
-                if (descendedToBattlefield && verticallyNearPlayer
-                        && auraX * auraX + auraZ * auraZ <= 6.0D * 6.0D) {
+                if (auraX * auraX + auraY * auraY + auraZ * auraZ <= 3.0D * 3.0D) {
                     com.endsustain.EndSustain.LOGGER.info(
-                            "[终焉维系] 星辰矢 6 格强杀领域命中玩家：{}，箭体坐标={}",
+                            "[终焉维系] 星辰矢 3 格球形强杀领域命中玩家：{}，箭体坐标={}",
                             player.getGameProfile().getName(), starArrow.position());
-                    player.setInvulnerable(false);
-                    player.invulnerableTime = 0;
-                    player.hurt(this.damageSources().fellOutOfWorld(), (float) Integer.MAX_VALUE);
-                    if (player.isAlive()) {
-                        forceTrueKill(player);
-                    }
+                    TrueKillUtil.forceKill(player, this.damageSources().fellOutOfWorld(), this,
+                            (float) Integer.MAX_VALUE, false);
                     starArrow.discard();
                     break;
                 }
@@ -1440,6 +1474,11 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
         if (tag.getBoolean("EndsustainDropsGranted")) getPersistentData().putBoolean("EndsustainDropsGranted", true);
     }
 
+    public boolean isEnvironmentActive() {
+        return !combatDeathTailStarted && !combatDeathTailResolved
+                && !isRemoved() && getHealth() > 0.0F;
+    }
+
     @Override
     public boolean isAlive() {
         return combatDeathTailStarted && !combatDeathTailResolved || super.isAlive();
@@ -1458,34 +1497,105 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
         super.heal(amount);
     }
 
+    public boolean isCombatDeathTailStarted() { return combatDeathTailStarted; }
+    public boolean isCombatDeathTailResolved() { return combatDeathTailResolved; }
+    public Player getLastAttackingPlayer() { return this.lastHurtByPlayer; }
+
+    /** 参考亚波伦 setDoom：血量降到阈值时置位同步数据，由 tick 驱动尾杀，不依赖死亡事件。 */
+    public boolean getTailKillDoom() { return this.entityData.get(TAIL_KILL_DOOM); }
+    public void setTailKillDoom(boolean value) { this.entityData.set(TAIL_KILL_DOOM, value); }
+
+    /** 死亡瞬间向最后攻击玩家发射早期版本的定向星辰矢。 */
+    private void fireImmediateStarArrowsAtPlayer() {
+        if (!(this.level() instanceof ServerLevel server)) return;
+        Player target = this.lastHurtByPlayer;
+        if (target == null || !target.isAlive() || target.level() != this.level()) {
+            target = server.getNearestPlayer(this, 96.0D);
+        }
+        if (target == null || !target.isAlive()) return;
+        EntityType<?> starArrowType = ForgeRegistries.ENTITY_TYPES.getValue(
+                new ResourceLocation("revelationfix", "star_arrow"));
+        if (starArrowType == null) {
+            com.endsustain.EndSustain.LOGGER.error("[终焉维系] 找不到 revelationfix:star_arrow，尾杀未生成弹体");
+            return;
+        }
+        int spawned = 0;
+        for (int i = 0; i < 10; i++) {
+            Vec3 spawn = new Vec3(this.getX() + (this.random.nextDouble() - 0.5D) * 1.5D,
+                    this.getEyeY() + 0.25D + i * 0.03D,
+                    this.getZ() + (this.random.nextDouble() - 0.5D) * 1.5D);
+            Vec3 aim = target.getEyePosition().add(
+                    (this.random.nextDouble() - 0.5D) * 0.8D,
+                    (this.random.nextDouble() - 0.5D) * 0.5D,
+                    (this.random.nextDouble() - 0.5D) * 0.8D).subtract(spawn).normalize();
+            Entity starArrow = starArrowType.create(server);
+            if (starArrow == null) continue;
+            starArrow.setPos(spawn.x, spawn.y, spawn.z);
+            starArrow.addTag("endsustain_star_arrow");
+            if (starArrow instanceof net.minecraft.world.entity.projectile.Projectile projectile) {
+                projectile.setOwner(this);
+                projectile.shoot(aim.x, aim.y, aim.z, 3.0F, 0.2F);
+            } else {
+                starArrow.setDeltaMovement(aim.scale(3.0D));
+            }
+            try {
+                starArrow.getClass().getMethod("setPower", float.class).invoke(starArrow, 10.0F);
+                starArrow.getClass().getMethod("setDamageMultiplier", float.class).invoke(starArrow, 1.0F);
+            } catch (ReflectiveOperationException ignored) {}
+            if (server.addFreshEntity(starArrow)) spawned++;
+        }
+        server.sendParticles(ParticleTypes.END_ROD, this.getX(), this.getEyeY(), this.getZ(),
+                40, 0.7D, 0.7D, 0.7D, 0.12D);
+        server.playSound(null, this.getX(), this.getY(), this.getZ(),
+                SoundEvents.AMETHYST_CLUSTER_BREAK, this.getSoundSource(), 2.0F, 1.6F);
+        com.endsustain.EndSustain.LOGGER.info("[终焉维系] 尾杀定向星辰矢已释放：{} 支，目标={}",
+                spawned, target.getGameProfile().getName());
+    }
+
     public boolean beginCombatDeathTail(net.minecraft.world.damagesource.DamageSource source) {
         if (DimensionPhaseManager.isTransitioning(this) || combatDeathTailResolved) return false;
         if (combatDeathTailStarted) return true;
         TrueKillUtil.cancelPending(this);
         getPersistentData().remove(TrueKillUtil.TERMINAL_STATE_KEY);
         combatDeathTailStarted = true;
+        setTailKillDoom(true);
         getPersistentData().putBoolean("EndsustainTailKillUsed", true);
         combatDeathSource = source;
         tailHealthWrite = true;
         this.setHealth(0.0F);
         tailHealthWrite = false;
-        this.pendingStarStrikePos = this.position();
-        this.starStrikeWindup = 30;
+        this.pendingStarStrikePos = null;
+        this.starStrikeWindup = 0;
         this.setAttackState(STATE_IDLE);
         this.setAttackTick(0);
-        this.setInvulnerable(true);
         this.getNavigation().stop();
         this.setDeltaMovement(Vec3.ZERO);
-        com.endsustain.EndSustain.LOGGER.info("[终焉维系] Boss 已进入死亡后尾杀：30 Tick 后释放星辰矢");
+        this.setInvulnerable(true);
+        this.starStrikeDomainCenter = this.position();
+        this.starStrikeDomainTicks = 200;
+        fireImmediateStarArrowsAtPlayer();
+        com.endsustain.EndSustain.LOGGER.info("[终焉维系] Boss 死亡尾杀已瞬发，星辰矢进入 3 格球形强杀领域");
         return true;
+    }
+
+    @Override
+    public void remove(Entity.RemovalReason reason) {
+        ForgeBusEvents.markFinaleRemoval(this, reason);
+        if (reason == Entity.RemovalReason.KILLED
+                && !combatDeathTailStarted && !combatDeathTailResolved
+                && !DimensionPhaseManager.isTransitioning(this)) {
+            net.minecraft.world.damagesource.DamageSource source = this.lastHurtByPlayer != null
+                    ? this.damageSources().playerAttack(this.lastHurtByPlayer)
+                    : this.damageSources().generic();
+            if (beginCombatDeathTail(source)) return;
+        }
+        super.remove(reason);
     }
 
     @Override
     public void die(net.minecraft.world.damagesource.DamageSource source) {
         if (DimensionPhaseManager.isTransitioning(this)) return;
-        boolean combatSource = source.getEntity() instanceof Player || source.getEntity() == this
-                || source.getDirectEntity() instanceof EndsustainBladeEntity;
-        if (combatSource && beginCombatDeathTail(source)) return;
+        if (beginCombatDeathTail(source)) return;
         if (combatDeathTailStarted && !combatDeathTailResolved) return;
         super.die(source);
     }

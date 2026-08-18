@@ -4,6 +4,8 @@ import com.endsustain.EndSustain;
 import com.endsustain.config.EndSustainConfig;
 import com.endsustain.entity.companion.SmallZhanjiangCompanionEntity;
 import net.minecraft.network.chat.Component;
+import net.minecraft.network.protocol.game.ClientboundPlayerCombatKillPacket;
+import net.minecraft.world.level.gameevent.GameEvent;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.damagesource.DamageSource;
@@ -64,13 +66,18 @@ public final class TrueKillUtil {
             EntityHealthStateBridge.zeroActiveHealth(target);
         }
 
-        if (target instanceof ServerPlayer) {
+        if (target instanceof ServerPlayer player) {
             target.die(source);
             PENDING_DEATHS.remove(target.getUUID());
+            if (!deathTransactionStarted(target)) {
+                forceServerPlayerDeathTransaction(player, source);
+            }
             if (deathTransactionStarted(target)) {
-                EndSustain.LOGGER.info("终焉伤害已单次完成玩家死亡事务：{}", target.getType());
+                EndSustain.LOGGER.info("终焉伤害已单次完成玩家死亡事务：{}，维度={}",
+                        target.getType(), target.level().dimension().location());
             } else {
-                EndSustain.LOGGER.error("玩家死亡事务未建立，已停止重复调用：{}", target.getType());
+                EndSustain.LOGGER.error("玩家死亡事务建立失败：{}，维度={}",
+                        target.getType(), target.level().dimension().location());
             }
             return;
         }
@@ -146,6 +153,18 @@ public final class TrueKillUtil {
                 iterator.remove();
             }
         }
+    }
+
+    private static void forceServerPlayerDeathTransaction(ServerPlayer player, DamageSource source) {
+        if (player instanceof TerminalDeathStateAccess access) {
+            access.endsustain$forceDeathTransaction();
+        }
+        Component message = source.getLocalizedDeathMessage(player);
+        player.connection.send(new ClientboundPlayerCombatKillPacket(player.getId(), message));
+        player.level().broadcastEntityEvent(player, (byte) 3);
+        player.gameEvent(GameEvent.ENTITY_DIE);
+        EndSustain.LOGGER.warn("玩家死亡被外部复活效果截断，已强制建立死亡事务：玩家={}，维度={}",
+                player.getGameProfile().getName(), player.level().dimension().location());
     }
 
     private static boolean deathTransactionStarted(LivingEntity target) {

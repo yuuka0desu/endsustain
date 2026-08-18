@@ -1,6 +1,7 @@
 package com.endsustain.event;
 
 import com.endsustain.EndSustain;
+import com.endsustain.FinaleEnvironmentState;
 import com.endsustain.combat.TrueKillUtil;
 import com.endsustain.compat.CompatHandler;
 import com.endsustain.entity.boss.EndsustainBladeEntity;
@@ -11,12 +12,18 @@ import com.endsustain.item.weapon.EndsustainBladeItem;
 import com.mojang.brigadier.Command;
 import net.minecraft.commands.Commands;
 import net.minecraft.nbt.CompoundTag;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.particles.ParticleTypes;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.entity.projectile.Projectile;
 import net.minecraft.world.entity.animal.Pig;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.EnchantedBookItem;
@@ -24,6 +31,7 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.enchantment.EnchantmentHelper;
 import net.minecraft.world.item.enchantment.Enchantments;
+import net.minecraft.world.phys.Vec3;
 import net.minecraftforge.registries.ForgeRegistries;
 import net.minecraftforge.eventbus.api.EventPriority;
 import net.minecraftforge.event.RegisterCommandsEvent;
@@ -40,6 +48,10 @@ import net.minecraftforge.event.server.ServerAboutToStartEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
+
 /**
  * FORGE 总线监听：在服务器完全加载后才初始化 compat，避开所有配置/注册阶段。
  */
@@ -47,6 +59,99 @@ import net.minecraftforge.fml.common.Mod;
 public class ForgeBusEvents {
 
     private static boolean compatInitialized = false;
+    private static final Map<UUID, FinalePresence> FINALE_PRESENCE = new HashMap<>();
+
+    public static void observeFinaleBoss(FinaleEndsustainEntity boss) {
+        if (boss.level().isClientSide || boss.isRemoved()) return;
+        FinaleEnvironmentState.setPresenceState(boss.level().getServer(), true);
+        FINALE_PRESENCE.put(boss.getUUID(), new FinalePresence(
+                boss.level().dimension(), boss.blockPosition(), boss.position(),
+                boss.getLastAttackingPlayer() == null ? null : boss.getLastAttackingPlayer().getUUID(),
+                false));
+    }
+
+    public static void markFinaleRemoval(FinaleEndsustainEntity boss, Entity.RemovalReason reason) {
+        FinalePresence presence = FINALE_PRESENCE.get(boss.getUUID());
+        if (presence == null) return;
+        if (reason != Entity.RemovalReason.KILLED
+                || boss.isCombatDeathTailResolved()
+                || reason == Entity.RemovalReason.DISCARDED
+                || reason == Entity.RemovalReason.UNLOADED_TO_CHUNK
+                || reason == Entity.RemovalReason.CHANGED_DIMENSION) {
+            presence.benignRemoval = true;
+        }
+    }
+
+    private static void tickFinalePresence(MinecraftServer server) {
+        var iterator = FINALE_PRESENCE.entrySet().iterator();
+        while (iterator.hasNext()) {
+            var entry = iterator.next();
+            FinalePresence presence = entry.getValue();
+            ServerLevel level = server.getLevel(presence.dimension);
+            if (level == null || !level.hasChunkAt(presence.blockPos)) {
+                iterator.remove();
+                FinaleEnvironmentState.setPresenceState(server, false);
+                continue;
+            }
+            Entity current = level.getEntity(entry.getKey());
+            if (current != null && !current.isRemoved()) continue;
+            iterator.remove();
+            FinaleEnvironmentState.setPresenceState(server, false);
+            if (!presence.benignRemoval) recoverMissingFinale(server, presence);
+        }
+    }
+
+    private static void recoverMissingFinale(MinecraftServer server, FinalePresence presence) {
+        ServerLevel level = server.getLevel(presence.dimension);
+        if (level == null) return;
+        Player target = presence.targetUuid == null ? null : server.getPlayerList().getPlayer(presence.targetUuid);
+        if (target == null || target.level() != level || !target.isAlive()) {
+            target = level.getNearestPlayer(presence.position.x, presence.position.y, presence.position.z, 96.0D, false);
+        }
+        EntityType<?> type = ForgeRegistries.ENTITY_TYPES.getValue(
+                new ResourceLocation("revelationfix", "star_arrow"));
+        if (type != null && target != null) {
+            for (int i = 0; i < 10; i++) {
+                Vec3 spawn = presence.position.add((level.random.nextDouble() - 0.5D) * 1.5D,
+                        1.8D + i * 0.03D, (level.random.nextDouble() - 0.5D) * 1.5D);
+                Vec3 aim = target.getEyePosition().subtract(spawn).normalize();
+                Entity arrow = type.create(level);
+                if (arrow == null) continue;
+                arrow.setPos(spawn.x, spawn.y, spawn.z);
+                arrow.addTag("endsustain_star_arrow");
+                arrow.addTag("endsustain_recovered_tail");
+                if (arrow instanceof Projectile projectile) projectile.shoot(aim.x, aim.y, aim.z, 3.0F, 0.2F);
+                else arrow.setDeltaMovement(aim.scale(3.0D));
+                level.addFreshEntity(arrow);
+            }
+        }
+        for (Player player : level.players()) {
+            double dx = player.getX() - presence.position.x;
+            double dy = player.getY() - presence.position.y;
+            double dz = player.getZ() - presence.position.z;
+            if (dx * dx + dy * dy + dz * dz <= 9.0D) {
+                TrueKillUtil.forceKill(player, level.damageSources().fellOutOfWorld(), null,
+                        (float) Integer.MAX_VALUE, false);
+            }
+        }
+        level.sendParticles(ParticleTypes.END_ROD, presence.position.x, presence.position.y + 1.0D,
+                presence.position.z, 40, 0.7D, 0.7D, 0.7D, 0.12D);
+        EndSustain.LOGGER.warn("蘸酱实体在已加载维度异常消失，已恢复尾杀：维度={}，位置={}",
+                presence.dimension.location(), presence.position);
+    }
+
+    private static final class FinalePresence {
+        private final net.minecraft.resources.ResourceKey<net.minecraft.world.level.Level> dimension;
+        private final BlockPos blockPos;
+        private final Vec3 position;
+        private final UUID targetUuid;
+        private boolean benignRemoval;
+        private FinalePresence(net.minecraft.resources.ResourceKey<net.minecraft.world.level.Level> dimension,
+                               BlockPos blockPos, Vec3 position, UUID targetUuid, boolean benignRemoval) {
+            this.dimension = dimension; this.blockPos = blockPos; this.position = position;
+            this.targetUuid = targetUuid; this.benignRemoval = benignRemoval;
+        }
+    }
 
     @SubscribeEvent
     public static void onServerAboutToStart(ServerAboutToStartEvent event) {
@@ -61,6 +166,8 @@ public class ForgeBusEvents {
     public static void onServerTick(TickEvent.ServerTickEvent event) {
         if (event.phase == TickEvent.Phase.END) {
             TrueKillUtil.tickPendingDeaths(event.getServer());
+            EndsustainBladeEntity.tickPresence(event.getServer());
+            tickFinalePresence(event.getServer());
             com.endsustain.combat.TimeStopManager.tick(event.getServer());
         }
     }
@@ -149,7 +256,7 @@ public class ForgeBusEvents {
                         "tonsofenchants", "enhanced_sharpness"));
         return enchantments.containsKey(enhancedSharpness)
                 || enchantments.containsKey(Enchantments.SHARPNESS)
-                || enchantments.getOrDefault(Enchantments.POWER_ARROWS, 0) == 32767;
+                || enchantments.getOrDefault(Enchantments.POWER_ARROWS, 0) >= 255;
     }
 
     private static void giveFinaleReward(ServerPlayer player, ItemStack reward) {
@@ -185,6 +292,10 @@ public class ForgeBusEvents {
             event.setCanceled(true);
             return;
         }
+        if (event.getEntity() instanceof FinaleEndsustainEntity boss
+                && event.getSource().getEntity() instanceof ServerPlayer attacker) {
+            boss.wakeFromPlayerAttack(attacker);
+        }
         if (event.getEntity() instanceof Player player && isFinaleDamage(event.getSource())) {
             player.invulnerableTime = 0;
             player.setInvulnerable(false);
@@ -211,6 +322,39 @@ public class ForgeBusEvents {
         }
     }
 
+    /** RevelationCage 使用 actuallyHurt 绕过 LivingHurtEvent；在实际扣血后补接尾杀入口。 */
+    @SubscribeEvent(priority = EventPriority.HIGHEST, receiveCanceled = true)
+    public static void interceptFinaleDamageAfterActuallyHurt(LivingDamageEvent event) {
+        if (!(event.getEntity() instanceof FinaleEndsustainEntity boss)
+                || boss.isCombatDeathTailStarted() || boss.isCombatDeathTailResolved()
+                || boss.getHealth() > 0.0F) return;
+        if (event.getSource().getEntity() instanceof ServerPlayer player) {
+            boss.setLastHurtByPlayer(player);
+        }
+        boss.setTailKillDoom(true);
+        if (boss.beginCombatDeathTail(event.getSource())) event.setCanceled(true);
+    }
+
+    @SubscribeEvent(priority = EventPriority.HIGHEST)
+    public static void interceptFinaleCombatDeath(LivingHurtEvent event) {
+        if (!(event.getEntity() instanceof FinaleEndsustainEntity boss)
+                || boss.isCombatDeathTailStarted() || boss.isCombatDeathTailResolved()) return;
+        if (event.getAmount() < boss.getHealth()) return;
+        if (event.getSource().getEntity() instanceof ServerPlayer player) boss.setLastHurtByPlayer(player);
+        boss.setTailKillDoom(true);
+        boss.beginCombatDeathTail(event.getSource());
+        event.setCanceled(true);
+    }
+
+    @SubscribeEvent(priority = EventPriority.HIGHEST, receiveCanceled = true)
+    public static void interceptFinaleCombatDeathEvent(LivingDeathEvent event) {
+        if (!(event.getEntity() instanceof FinaleEndsustainEntity boss)
+                || boss.isCombatDeathTailStarted() || boss.isCombatDeathTailResolved()) return;
+        if (event.getSource().getEntity() instanceof ServerPlayer player) boss.setLastHurtByPlayer(player);
+        boss.setTailKillDoom(true);
+        if (boss.beginCombatDeathTail(event.getSource())) event.setCanceled(true);
+    }
+
     @SubscribeEvent(priority = EventPriority.HIGHEST)
     public static void onOverflowBladeAttackEarly(AttackEntityEvent event) {
         if (!(event.getEntity() instanceof ServerPlayer player)
@@ -219,14 +363,7 @@ public class ForgeBusEvents {
                 || !EndsustainBladeItem.hasOverflowDamage(player)
                 || target.getPersistentData().getBoolean("EndsustainTrueKillRunning")
                 || TrueKillUtil.isPending(target)
-                || target instanceof FinaleEndsustainEntity boss
-                && boss.getHealth() > boss.getMaxHealth() * 0.15F) return;
-        if (target instanceof FinaleEndsustainEntity boss) {
-            boss.setLastHurtByPlayer(player);
-            boss.beginCombatDeathTail(player.damageSources().playerAttack(player));
-            event.setCanceled(true);
-            return;
-        }
+                || target instanceof FinaleEndsustainEntity) return;
         target.getPersistentData().putBoolean("EndsustainTrueKillRunning", true);
         try {
             com.endsustain.EndSustain.LOGGER.info("终焉之刃溢出近战命中：玩家={}，目标={}，游戏分钟={}，基础伤害={}",
@@ -263,17 +400,9 @@ public class ForgeBusEvents {
         event.setAmount((float) Math.max(0.0D, baseDamage + enchantmentBonus));
         spawnEchoingStrikeEffect(event.getEntity(), player);
 
-        if (baseDamage > Integer.MAX_VALUE) {
-            if (event.getEntity() instanceof FinaleEndsustainEntity boss) {
-                if (boss.getHealth() <= boss.getMaxHealth() * 0.15F) {
-                    boss.setLastHurtByPlayer(player);
-                    boss.beginCombatDeathTail(player.damageSources().playerAttack(player));
-                    event.setCanceled(true);
-                }
-            } else {
-                TrueKillUtil.forceKill(event.getEntity(), player.damageSources().playerAttack(player), player,
-                        2_100_000_000.0F, true);
-            }
+        if (baseDamage > Integer.MAX_VALUE && !(event.getEntity() instanceof FinaleEndsustainEntity)) {
+            TrueKillUtil.forceKill(event.getEntity(), player.damageSources().playerAttack(player), player,
+                    2_100_000_000.0F, true);
         }
     }
 

@@ -4195,9 +4195,37 @@
         },
         "AllHead": {
           "rotation": [
-            -60,
+            0,
             0,
             0
+          ]
+        },
+        "RightEyesBase": {
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "LeftEyesBase": {
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "RightEyelid": {
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        },
+        "LeftEyelid": {
+          "scale": [
+            1,
+            1,
+            1
           ]
         },
         "BackSkirt": {
