@@ -1,7 +1,6 @@
 package com.endsustain;
 
 import com.endsustain.config.EndSustainConfig;
-import com.endsustain.entity.boss.FinaleEndsustainEntity;
 import com.endsustain.network.EndSustainNetwork;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
@@ -42,21 +41,7 @@ public final class FinaleEnvironmentState {
     public static void onServerTick(TickEvent.ServerTickEvent event) {
         if (event.phase != TickEvent.Phase.END) return;
         MinecraftServer server = event.getServer();
-        boolean present = false;
-        for (ServerLevel level : server.getAllLevels()) {
-            for (var entity : level.getAllEntities()) {
-                if (entity instanceof FinaleEndsustainEntity finale && finale.isEnvironmentActive()
-                        && level.isLoaded(finale.blockPosition())) {
-                    present = true;
-                    break;
-                }
-            }
-            if (present) break;
-        }
-
-        if (present != active) {
-            setPresenceState(server, present);
-        } else if (active && server.getTickCount() % 40 == 0) {
+        if (active && server.getTickCount() % 40 == 0) {
             EndSustainNetwork.broadcastEnvironment(server, true);
         }
 

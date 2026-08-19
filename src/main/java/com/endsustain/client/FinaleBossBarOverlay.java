@@ -17,6 +17,8 @@ import net.minecraftforge.fml.common.Mod;
 public final class FinaleBossBarOverlay {
     private static final int BAR_WIDTH = 220;
     private static final int BAR_HEIGHT = 12;
+    private static final java.util.List<String> FINALE_NAME_KEYWORDS = java.util.List.of(
+            "落幕之终焉", "末影蘸酱", "Finale Endsustain", "Endsustain", "Ender Zhajiang");
 
     private FinaleBossBarOverlay() {}
 
@@ -24,7 +26,7 @@ public final class FinaleBossBarOverlay {
     public static void renderFinaleBossBar(CustomizeGuiOverlayEvent.BossEventProgress event) {
         LerpingBossEvent bossEvent = event.getBossEvent();
         String bossName = bossEvent.getName().getString();
-        if (!bossName.contains("落幕之终焉") && !bossName.contains("末影蘸酱")) return;
+        if (FINALE_NAME_KEYWORDS.stream().noneMatch(bossName::contains)) return;
 
         event.setCanceled(true);
         event.setIncrement(38);

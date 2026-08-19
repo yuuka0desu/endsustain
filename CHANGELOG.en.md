@@ -1,6 +1,13 @@
-# EndSustain 0.2.1
+# EndSustain 0.2.3
 
 ## Highlights
+
+- Fixed Small Zhanjiang companion rendering by isolating its model cache from Finale Endsustain.
+- Stabilized Small Zhanjiang companion generation with equip, tick, and Curios callback recovery paths.
+- Raised the Small Zhanjiang companion entity size from a zero-sized marker to a tracked renderer-friendly hitbox.
+- Kept the finale combat, weather, and skill pipeline improvements from the 0.2.x line.
+
+## Highlights from 0.2.1
 
 - Improved Finale Endsustain death-tail reliability across dimensions and damage systems.
 - Added server-side presence tracking to recover the death tail when the boss disappears unexpectedly.

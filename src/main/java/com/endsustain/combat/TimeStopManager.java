@@ -70,8 +70,10 @@ public final class TimeStopManager {
                 if (!isFrozen(player)) continue;
                 player.setDeltaMovement(Vec3.ZERO);
                 player.hurtMarked = true;
-                player.connection.teleport(player.getX(), player.getY(), player.getZ(),
-                        player.getYRot(), player.getXRot());
+                if (player.connection != null) {
+                    player.connection.teleport(player.getX(), player.getY(), player.getZ(),
+                            player.getYRot(), player.getXRot());
+                }
             }
         }
     }

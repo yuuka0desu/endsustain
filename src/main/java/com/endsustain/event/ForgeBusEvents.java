@@ -63,6 +63,7 @@ public class ForgeBusEvents {
 
     public static void observeFinaleBoss(FinaleEndsustainEntity boss) {
         if (boss.level().isClientSide || boss.isRemoved()) return;
+        if (!boss.isEnvironmentActive()) return;
         FinaleEnvironmentState.setPresenceState(boss.level().getServer(), true);
         FINALE_PRESENCE.put(boss.getUUID(), new FinalePresence(
                 boss.level().dimension(), boss.blockPosition(), boss.position(),
@@ -265,6 +266,11 @@ public class ForgeBusEvents {
         player.inventoryMenu.broadcastChanges();
     }
 
+    /**
+     * 终焉伤害目标的死亡事件兜底：以最低优先级执行，撤销其它模组对
+     * LivingDeathEvent 的取消，保证死亡掉落（含 Boss 专属背包奖励）正常发生。
+     * dead 标志在事件 post 之前已置位，本处理器只负责恢复死亡后事。
+     */
     @SubscribeEvent(priority = EventPriority.LOWEST, receiveCanceled = true)
     public static void onTerminalDeathFinalization(LivingDeathEvent event) {
         if (event.getEntity().getPersistentData()

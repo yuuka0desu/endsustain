@@ -58,9 +58,7 @@ public final class FinaleActiveSkills {
     private static final String DEATH_ARROW_DEBUFF_DONE = "EndsustainDeathArrowDebuffDone";
     private static final String HEAL_BLOCK_UNTIL = "EndsustainDeathArrowHealBlockUntil";
     private static final String PILLAR_OWNER = "EndsustainPillarOwner";
-    private static final String PILLAR_ANCHOR_ID = "EndsustainPillarAnchorId";
     private static final String PILLAR_ANCHOR = "EndsustainPillarAnchor";
-    private static final String PILLAR_EXPIRE_TICK = "EndsustainPillarExpireTick";
     private static final String PILLAR_HEALTH_SNAPSHOT = "EndsustainPillarHealthSnapshot";
     private static final String PILLAR_PROTECTED = "EndsustainPillarProtected";
     private static final int PILLAR_LIFESPAN = 20 * 60;
@@ -73,6 +71,7 @@ public final class FinaleActiveSkills {
     private static final long[] COOLDOWNS = {50_000L, 300_000L, 50_000L, 100_000L, 120_000L, 600_000L};
     private static final List<PendingThorn> PENDING_THORNS = new ArrayList<>();
     private static final List<PendingDomainArrow> PENDING_DOMAIN_ARROWS = new ArrayList<>();
+    private static final java.util.Map<java.util.UUID, CachedPillarProtection> PILLAR_PROTECTION_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
 
     private FinaleActiveSkills() {}
 
@@ -299,14 +298,19 @@ public final class FinaleActiveSkills {
     }
 
     private static boolean hasPillarProtection(ServerPlayer player) {
+        long now = player.level().getGameTime();
+        CachedPillarProtection cached = PILLAR_PROTECTION_CACHE.get(player.getUUID());
+        if (cached != null && cached.expireTick > now) return cached.value;
         UUID owner = player.getUUID();
-        return player.serverLevel().getEntitiesOfClass(Entity.class,
+        boolean result = player.serverLevel().getEntitiesOfClass(Entity.class,
                 player.getBoundingBox().inflate(12.0D), entity ->
                         entity.isAlive()
                                 && isEntity(entity, PILLAR_ID)
                                 && entity.getPersistentData().hasUUID(PILLAR_OWNER)
                                 && owner.equals(entity.getPersistentData().getUUID(PILLAR_OWNER))
                                 && entity.getPersistentData().getBoolean(PILLAR_ANCHOR)).size() >= 1;
+        PILLAR_PROTECTION_CACHE.put(player.getUUID(), new CachedPillarProtection(result, now + 5L));
+        return result;
     }
 
     @SubscribeEvent
@@ -348,8 +352,8 @@ public final class FinaleActiveSkills {
             } catch (NoSuchMethodException ignored) {
                 setter = data.getClass().getMethod("m_135381_", net.minecraft.network.syncher.EntityDataAccessor.class, Object.class);
             }
-            setter.invoke(data, accessor, value);
-        } catch (ReflectiveOperationException exception) {
+            setter.invoke(data, accessor, Float.valueOf(value));
+        } catch (Throwable exception) {
             EndSustain.LOGGER.warn("无法设置潮汐触手伤害快照", exception);
         }
     }
@@ -571,6 +575,11 @@ public final class FinaleActiveSkills {
     }
 
     @SubscribeEvent
+    public static void onPlayerLogout(net.minecraftforge.event.entity.player.PlayerEvent.PlayerLoggedOutEvent event) {
+        PILLAR_PROTECTION_CACHE.remove(event.getEntity().getUUID());
+    }
+
+    @SubscribeEvent
     public static void onServerTick(TickEvent.ServerTickEvent event) {
         if (event.phase != TickEvent.Phase.END) return;
         var server = event.getServer();
@@ -628,7 +637,6 @@ public final class FinaleActiveSkills {
     private static void spawnObsidianPillars(ServerPlayer player, ServerLevel level) {
         player.getPersistentData().putFloat(PILLAR_HEALTH_SNAPSHOT, player.getHealth());
         player.getPersistentData().putBoolean(PILLAR_PROTECTED, true);
-        UUID anchor = UUID.randomUUID();
         int[][] offsets = {{5, 0}, {-5, 0}, {0, 5}, {0, -5}};
         for (int[] offset : offsets) {
             BlockPos start = BlockPos.containing(player.getX() + offset[0], player.getY() + 4.0D,
@@ -644,7 +652,6 @@ public final class FinaleActiveSkills {
             invoke(pillar, "setHasLifespan", new Class[]{boolean.class}, true);
             invoke(pillar, "setLifespan", new Class[]{int.class}, PILLAR_LIFESPAN);
             pillar.getPersistentData().putUUID(PILLAR_OWNER, player.getUUID());
-            pillar.getPersistentData().putUUID(PILLAR_ANCHOR_ID, anchor);
             pillar.getPersistentData().putBoolean(PILLAR_ANCHOR, true);
             level.addFreshEntity(pillar);
         }
@@ -737,8 +744,27 @@ public final class FinaleActiveSkills {
     private static void setField(Object target, String name, Object value) {
         try {
             Field field = target.getClass().getField(name);
-            field.set(target, value);
-        } catch (ReflectiveOperationException ignored) {}
+            Class<?> type = field.getType();
+            if (type == float.class || type == Float.class) {
+                field.setFloat(target, ((Number) value).floatValue());
+            } else if (type == double.class || type == Double.class) {
+                field.setDouble(target, ((Number) value).doubleValue());
+            } else if (type == int.class || type == Integer.class) {
+                field.setInt(target, ((Number) value).intValue());
+            } else if (type == long.class || type == Long.class) {
+                field.setLong(target, ((Number) value).longValue());
+            } else if (type == short.class || type == Short.class) {
+                field.setShort(target, ((Number) value).shortValue());
+            } else if (type == byte.class || type == Byte.class) {
+                field.setByte(target, ((Number) value).byteValue());
+            } else if (type == boolean.class || type == Boolean.class) {
+                field.setBoolean(target, value instanceof Boolean b ? b : Boolean.parseBoolean(String.valueOf(value)));
+            } else if (type == char.class || type == Character.class) {
+                field.setChar(target, value instanceof Character c ? c : String.valueOf(value).isEmpty() ? '\0' : String.valueOf(value).charAt(0));
+            } else {
+                field.set(target, value);
+            }
+        } catch (Throwable ignored) {}
     }
 
     private static void message(ServerPlayer player, String key) {
@@ -747,4 +773,5 @@ public final class FinaleActiveSkills {
 
     private record PendingThorn(ResourceLocation dimension, BlockPos position, java.util.UUID owner, long dueTick) {}
     private record PendingDomainArrow(ResourceLocation dimension, UUID arrow, UUID target, long expireTick) {}
+    private record CachedPillarProtection(boolean value, long expireTick) {}
 }

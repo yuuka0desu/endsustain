@@ -26,30 +26,33 @@ public class EndsustainBladeRenderer extends EntityRenderer<EndsustainBladeEntit
     public void render(EndsustainBladeEntity blade, float entityYaw, float partialTick,
                        PoseStack poseStack, MultiBufferSource buffer, int packedLight) {
         poseStack.pushPose();
+        try {
+            float yaw = Mth.lerp(partialTick, blade.yRotO, blade.getYRot());
+            float pitch = Mth.lerp(partialTick, blade.xRotO, blade.getXRot());
 
-        float yaw = Mth.lerp(partialTick, blade.yRotO, blade.getYRot());
-        float pitch = Mth.lerp(partialTick, blade.xRotO, blade.getXRot());
+            // 与原版 ThrownTridentRenderer 相同：将实体局部长轴对准飞行向量。
+            poseStack.mulPose(Axis.YP.rotationDegrees(yaw - 90.0F));
+            poseStack.mulPose(Axis.ZP.rotationDegrees(pitch + 90.0F));
 
-        // 与原版 ThrownTridentRenderer 相同：将实体局部长轴对准飞行向量。
-        poseStack.mulPose(Axis.YP.rotationDegrees(yaw - 90.0F));
-        poseStack.mulPose(Axis.ZP.rotationDegrees(pitch + 90.0F));
+            // 在原 45° 轴向校正基础上翻转 180°，确保刀尖朝向飞行方向、刀柄位于后方。
+            poseStack.mulPose(Axis.ZP.rotationDegrees(225.0F));
+            poseStack.scale(1.35F, 1.35F, 1.35F);
 
-        // 在原 45° 轴向校正基础上翻转 180°，确保刀尖朝向飞行方向、刀柄位于后方。
-        poseStack.mulPose(Axis.ZP.rotationDegrees(225.0F));
-        poseStack.scale(1.35F, 1.35F, 1.35F);
-
-        this.itemRenderer.renderStatic(
-                blade.getItem(),
-                ItemDisplayContext.GROUND,
-                packedLight,
-                OverlayTexture.NO_OVERLAY,
-                poseStack,
-                buffer,
-                blade.level(),
-                blade.getId()
-        );
-
-        poseStack.popPose();
+            net.minecraft.world.item.ItemStack renderedStack = blade.getItem();
+            if (renderedStack == null) renderedStack = net.minecraft.world.item.ItemStack.EMPTY;
+            this.itemRenderer.renderStatic(
+                    renderedStack,
+                    ItemDisplayContext.GROUND,
+                    packedLight,
+                    OverlayTexture.NO_OVERLAY,
+                    poseStack,
+                    buffer,
+                    blade.level(),
+                    blade.getId()
+            );
+        } finally {
+            poseStack.popPose();
+        }
         super.render(blade, entityYaw, partialTick, poseStack, buffer, packedLight);
     }
 

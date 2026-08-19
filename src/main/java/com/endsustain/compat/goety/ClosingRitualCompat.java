@@ -69,9 +69,17 @@ public final class ClosingRitualCompat {
                         }
                         if ("toString".equals(name)) return "EndsustainClosingRitualType";
                         if ("hashCode".equals(name)) return System.identityHashCode(proxy);
-                        if ("equals".equals(name)) return proxy == args[0];
-                        if (method.getReturnType() == boolean.class) return false;
-                        if (method.getReturnType() == int.class) return 0;
+                        if ("equals".equals(name)) return args != null && args.length > 0 && proxy == args[0];
+                        Class<?> returnType = method.getReturnType();
+                        if (returnType == void.class) return null;
+                        if (returnType == boolean.class) return false;
+                        if (returnType == byte.class) return (byte) 0;
+                        if (returnType == short.class) return (short) 0;
+                        if (returnType == int.class) return 0;
+                        if (returnType == long.class) return 0L;
+                        if (returnType == float.class) return 0.0F;
+                        if (returnType == double.class) return 0.0D;
+                        if (returnType == char.class) return '\0';
                         return null;
                     }
             );

@@ -28,7 +28,8 @@ public final class SmallZhanjiangEvents {
     private static final UUID CURIO_SLOT = UUID.fromString("0f6e1d13-61e6-473c-94ce-d25db9d62491");
     private static final UUID BACK_SLOT = UUID.fromString("2ab076b4-2a2c-4351-a9bd-80528c561625");
     private static final UUID BELT_SLOT = UUID.fromString("f174b985-d31a-47e0-bbab-d1d710794de5");
-    private static final String ACTIVE = "SmallZhanjiangActive";
+    public static final String ACTIVE = "SmallZhanjiangActive";
+    public static final String LAST_ACTIVE_TICK = "SmallZhanjiangLastActiveTick";
     private static final String COMPANION = "SmallZhanjiangCompanion";
     private static final String FIRST_SPAWN_GIFT = "EndsustainReceivedFirstSmallZhanjiang";
     private static final String FIRST_SPAWN_GIFT_VERSION = "EndsustainFirstSmallZhanjiangGiftVersion";
@@ -55,9 +56,18 @@ public final class SmallZhanjiangEvents {
             if (!equipped && wasActive) setExtraSlots(player, false);
         }
         player.getPersistentData().putBoolean(ACTIVE, equipped);
-        if (!equipped) { removeCompanion(player); return; }
+        int lastActiveTick = player.getPersistentData().getInt(LAST_ACTIVE_TICK);
+        if (equipped) {
+            player.getPersistentData().putInt(LAST_ACTIVE_TICK, player.tickCount);
+        } else if (player.tickCount - lastActiveTick <= 40) {
+            ensureCompanion(player, false);
+            return;
+        } else {
+            removeCompanion(player);
+            return;
+        }
 
-        ensureCompanion(player);
+        ensureCompanion(player, true);
         if (player.tickCount % 20 == 0) com.endsustain.progress.FinalePathProgress.scanInventory(player);
     }
 
@@ -75,24 +85,39 @@ public final class SmallZhanjiangEvents {
         });
     }
 
-    private static void ensureCompanion(ServerPlayer player) {
+    public static void ensureCompanion(ServerPlayer player, boolean requireEquipped) {
+        if (!(player.level() instanceof ServerLevel level)) return;
         SmallZhanjiangCompanionEntity companion = null;
-        if (player.getPersistentData().hasUUID(COMPANION) && player.level() instanceof ServerLevel level) {
+        if (player.getPersistentData().hasUUID(COMPANION)) {
             Entity entity = level.getEntity(player.getPersistentData().getUUID(COMPANION));
-            if (entity instanceof SmallZhanjiangCompanionEntity found) companion = found;
+            if (entity instanceof SmallZhanjiangCompanionEntity found && !found.isRemoved()) {
+                companion = found;
+            }
         }
-        if (companion == null && player.level() instanceof ServerLevel level) {
-            companion = new SmallZhanjiangCompanionEntity(ModEntities.SMALL_ZHANJIANG_COMPANION.get(), level);
-            companion.setOwner(player); companion.positionAtOwner(player);
-            level.addFreshEntity(companion);
-            player.getPersistentData().putUUID(COMPANION, companion.getUUID());
+        if (companion != null) {
+            if (!player.getUUID().equals(companion.getOwnerUuid())) {
+                EndSustain.LOGGER.info("[小蘸酱] 发现 owner 不匹配，重新绑定：{}", player.getGameProfile().getName());
+                companion.discard();
+                companion = null;
+            } else {
+                companion.positionAtOwner(player);
+                return;
+            }
         }
+        if (!requireEquipped) return;
+        companion = new SmallZhanjiangCompanionEntity(ModEntities.SMALL_ZHANJIANG_COMPANION.get(), level);
+        companion.setOwner(player);
+        companion.positionAtOwner(player);
+        level.addFreshEntity(companion);
+        player.getPersistentData().putUUID(COMPANION, companion.getUUID());
+        EndSustain.LOGGER.info("[小蘸酱] 已生成技术伴侣实体：{} -> {}", player.getGameProfile().getName(), companion.getUUID());
     }
 
-    private static void removeCompanion(ServerPlayer player) {
+    public static void removeCompanion(ServerPlayer player) {
         if (player.getPersistentData().hasUUID(COMPANION) && player.level() instanceof ServerLevel level) {
             Entity entity = level.getEntity(player.getPersistentData().getUUID(COMPANION));
             if (entity != null) entity.discard();
+            EndSustain.LOGGER.info("[小蘸酱] 已移除技术伴侣实体：{}", player.getGameProfile().getName());
         }
         player.getPersistentData().remove(COMPANION);
     }

@@ -30,7 +30,7 @@ import software.bernie.geckolib.util.GeckoLibUtil;
 import java.util.UUID;
 
 public class SmallZhanjiangCompanionEntity extends PathfinderMob implements GeoEntity {
-    private static final EntityDimensions MARKER_DIMENSIONS = EntityDimensions.fixed(0.0F, 0.0F);
+    private static final EntityDimensions MARKER_DIMENSIONS = EntityDimensions.fixed(0.6F, 1.0F);
     private final AnimatableInstanceCache cache = GeckoLibUtil.createInstanceCache(this);
     private UUID ownerUuid;
 

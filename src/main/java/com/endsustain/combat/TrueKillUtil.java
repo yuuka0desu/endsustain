@@ -35,7 +35,9 @@ public final class TrueKillUtil {
         try {
         if (target instanceof ServerPlayer player && kickPlayer
                 && EndSustainConfig.KICK_PLAYERS_ON_OVERFLOW.get()) {
-            player.connection.disconnect(Component.literal("终焉之刃的溢出伤害已将你驱逐。"));
+            if (player.connection != null) {
+                player.connection.disconnect(Component.literal("终焉之刃的溢出伤害已将你驱逐。"));
+            }
             return;
         }
 
@@ -160,7 +162,9 @@ public final class TrueKillUtil {
             access.endsustain$forceDeathTransaction();
         }
         Component message = source.getLocalizedDeathMessage(player);
-        player.connection.send(new ClientboundPlayerCombatKillPacket(player.getId(), message));
+        if (player.connection != null) {
+            player.connection.send(new ClientboundPlayerCombatKillPacket(player.getId(), message));
+        }
         player.level().broadcastEntityEvent(player, (byte) 3);
         player.gameEvent(GameEvent.ENTITY_DIE);
         EndSustain.LOGGER.warn("玩家死亡被外部复活效果截断，已强制建立死亡事务：玩家={}，维度={}",

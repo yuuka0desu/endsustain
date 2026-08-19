@@ -49,10 +49,13 @@ public class FinaleRenderer extends GeoEntityRenderer<FinaleEndsustainEntity> {
     public void render(FinaleEndsustainEntity entity, float entityYaw, float partialTick,
                        PoseStack poseStack, MultiBufferSource bufferSource, int packedLight) {
         poseStack.pushPose();
-        // 逆向模型按玩家约 2 格高度制作，缩放到 1.8 格高并匹配 0.8 格宽碰撞箱
-        poseStack.scale(0.9F, 0.9F, 0.9F);
-        super.render(entity, entityYaw, partialTick, poseStack, bufferSource, packedLight);
-        poseStack.popPose();
+        try {
+            // 逆向模型按玩家约 2 格高度制作，缩放到 1.8 格高并匹配 0.8 格宽碰撞箱
+            poseStack.scale(0.9F, 0.9F, 0.9F);
+            super.render(entity, entityYaw, partialTick, poseStack, bufferSource, packedLight);
+        } finally {
+            poseStack.popPose();
+        }
     }
 
     // ===== GeoModel：提供模型、贴图与动画文件 =====
@@ -69,11 +72,14 @@ public class FinaleRenderer extends GeoEntityRenderer<FinaleEndsustainEntity> {
                                      AnimationState<FinaleEndsustainEntity> animationState) {
             super.handleAnimations(entity, instanceId, animationState);
             if (!entity.isSleeping()) {
-                // 直接覆盖睡眠动画残留的骨骼快照，保证攻击唤醒后眼睛立即恢复。
-                getBone("RightEyesBase").ifPresent(bone -> bone.setScaleY(1.0F));
-                getBone("LeftEyesBase").ifPresent(bone -> bone.setScaleY(1.0F));
-                getBone("RightEyelid").ifPresent(bone -> bone.setScaleY(1.0F));
-                getBone("LeftEyelid").ifPresent(bone -> bone.setScaleY(1.0F));
+                // 直接覆盖睡眠动画残留的骨骼快照，保证攻击唤醒后眼睛与眉毛立即恢复。
+                // sleep 动画会把眼睑三轴缩为 0、眉毛下沉，必须完整复位而不是只改 Y 轴。
+                getBone("RightEyesBase").ifPresent(bone -> { bone.setScaleX(1.0F); bone.setScaleY(1.0F); bone.setScaleZ(1.0F); });
+                getBone("LeftEyesBase").ifPresent(bone -> { bone.setScaleX(1.0F); bone.setScaleY(1.0F); bone.setScaleZ(1.0F); });
+                getBone("RightEyelid").ifPresent(bone -> { bone.setScaleX(1.0F); bone.setScaleY(1.0F); bone.setScaleZ(1.0F); });
+                getBone("LeftEyelid").ifPresent(bone -> { bone.setScaleX(1.0F); bone.setScaleY(1.0F); bone.setScaleZ(1.0F); });
+                getBone("RightEyebrow").ifPresent(bone -> { bone.setPosX(0.0F); bone.setPosY(0.0F); bone.setPosZ(0.0F); });
+                getBone("LeftEyebrow").ifPresent(bone -> { bone.setPosX(0.0F); bone.setPosY(0.0F); bone.setPosZ(0.0F); });
                 getBone("AllHead").ifPresent(bone -> bone.setRotX(0.0F));
             }
         }

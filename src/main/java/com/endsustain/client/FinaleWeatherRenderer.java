@@ -40,50 +40,56 @@ public final class FinaleWeatherRenderer {
         RenderSystem.disableCull();
         RenderSystem.depthMask(false);
         RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, 1.0F);
-        RenderSystem.setShader(GameRenderer::getPositionTexColorShader);
-        RenderSystem.setShaderTexture(0, PURPLE_RAIN);
+        try {
+            RenderSystem.setShader(GameRenderer::getPositionTexColorShader);
+            RenderSystem.setShaderTexture(0, PURPLE_RAIN);
 
-        poseStack.pushPose();
-        Matrix4f matrix = poseStack.last().pose();
-        Tesselator tessellator = Tesselator.getInstance();
-        BufferBuilder buffer = tessellator.getBuilder();
-        buffer.begin(VertexFormat.Mode.QUADS, DefaultVertexFormat.POSITION_TEX_COLOR);
+            poseStack.pushPose();
+            try {
+                Matrix4f matrix = poseStack.last().pose();
+                Tesselator tessellator = Tesselator.getInstance();
+                BufferBuilder buffer = tessellator.getBuilder();
+                buffer.begin(VertexFormat.Mode.QUADS, DefaultVertexFormat.POSITION_TEX_COLOR);
 
-        int radius = minecraft.options.graphicsMode().get().getId() >= 1 ? 10 : 6;
-        for (int x = centerX - radius; x <= centerX + radius; x++) {
-            for (int z = centerZ - radius; z <= centerZ + radius; z++) {
-                int dx = x - centerX;
-                int dz = z - centerZ;
-                int distanceSq = dx * dx + dz * dz;
-                if (distanceSq > radius * radius) continue;
-                // 采用棋盘式稀疏采样，密度约为当前实现的一半，接近原版雨幕观感。
-                if (((x * 31 + z * 17) & 1) != 0) continue;
+                int radius = minecraft.options.graphicsMode().get().getId() >= 1 ? 10 : 6;
+                for (int x = centerX - radius; x <= centerX + radius; x++) {
+                    for (int z = centerZ - radius; z <= centerZ + radius; z++) {
+                        int dx = x - centerX;
+                        int dz = z - centerZ;
+                        int distanceSq = dx * dx + dz * dz;
+                        if (distanceSq > radius * radius) continue;
+                        // 采用棋盘式稀疏采样，密度约为当前实现的一半，接近原版雨幕观感。
+                        if (((x * 31 + z * 17) & 1) != 0) continue;
 
-                double length = Math.max(1.0D, Math.sqrt(distanceSq));
-                double sideX = -dz / length * 0.48D;
-                double sideZ = dx / length * 0.48D;
-                double rx = x + 0.5D - cameraX;
-                double rz = z + 0.5D - cameraZ;
-                double minY = centerY - 8.0D - cameraY;
-                double maxY = centerY + 8.0D - cameraY;
-                double distance = Math.sqrt(distanceSq) / radius;
-                int alpha = (int) (Mth.clamp((1.0D - distance * 0.72D) * 0.62D, 0.10D, 0.62D) * 255.0D);
-                float v0 = scroll + ((x * 13 + z * 29) & 15) / 16.0F;
-                float v1 = v0 + 1.75F;
+                        double length = Math.max(1.0D, Math.sqrt(distanceSq));
+                        double sideX = -dz / length * 0.48D;
+                        double sideZ = dx / length * 0.48D;
+                        double rx = x + 0.5D - cameraX;
+                        double rz = z + 0.5D - cameraZ;
+                        double minY = centerY - 8.0D - cameraY;
+                        double maxY = centerY + 8.0D - cameraY;
+                        double distance = Math.sqrt(distanceSq) / radius;
+                        int alpha = (int) (Mth.clamp((1.0D - distance * 0.72D) * 0.62D, 0.10D, 0.62D) * 255.0D);
+                        float v0 = scroll + ((x * 13 + z * 29) & 15) / 16.0F;
+                        float v1 = v0 + 1.75F;
 
-                vertex(buffer, matrix, rx - sideX, maxY, rz - sideZ, 0.0F, v0, alpha);
-                vertex(buffer, matrix, rx + sideX, maxY, rz + sideZ, 1.0F, v0, alpha);
-                vertex(buffer, matrix, rx + sideX, minY, rz + sideZ, 1.0F, v1, alpha);
-                vertex(buffer, matrix, rx - sideX, minY, rz - sideZ, 0.0F, v1, alpha);
+                        vertex(buffer, matrix, rx - sideX, maxY, rz - sideZ, 0.0F, v0, alpha);
+                        vertex(buffer, matrix, rx + sideX, maxY, rz + sideZ, 1.0F, v0, alpha);
+                        vertex(buffer, matrix, rx + sideX, minY, rz + sideZ, 1.0F, v1, alpha);
+                        vertex(buffer, matrix, rx - sideX, minY, rz - sideZ, 0.0F, v1, alpha);
+                    }
+                }
+                tessellator.end();
+            } finally {
+                poseStack.popPose();
             }
+        } finally {
+            RenderSystem.depthMask(true);
+            RenderSystem.enableCull();
+            RenderSystem.disableBlend();
+            RenderSystem.enableDepthTest();
+            RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, 1.0F);
         }
-        tessellator.end();
-        poseStack.popPose();
-
-        RenderSystem.depthMask(true);
-        RenderSystem.enableCull();
-        RenderSystem.setShaderColor(1.0F, 1.0F, 1.0F, 1.0F);
-        RenderSystem.disableBlend();
     }
 
     private static void vertex(BufferBuilder buffer, Matrix4f matrix, double x, double y, double z,

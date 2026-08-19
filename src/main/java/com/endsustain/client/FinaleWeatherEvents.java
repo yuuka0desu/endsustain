@@ -96,17 +96,20 @@ public final class FinaleWeatherEvents {
         MultiBufferSource.BufferSource buffers = minecraft.renderBuffers().bufferSource();
         VertexConsumer vertices = buffers.getBuffer(renderType);
 
-        Iterator<ClientThornSpike> iterator = THORN_SPIKES.iterator();
-        while (iterator.hasNext()) {
-            ClientThornSpike spike = iterator.next();
-            float age = gameTime - spike.startTick + event.getPartialTick();
-            if (age >= THORN_LIFETIME) {
-                iterator.remove();
-                continue;
+        try {
+            Iterator<ClientThornSpike> iterator = THORN_SPIKES.iterator();
+            while (iterator.hasNext()) {
+                ClientThornSpike spike = iterator.next();
+                float age = gameTime - spike.startTick + event.getPartialTick();
+                if (age >= THORN_LIFETIME) {
+                    iterator.remove();
+                    continue;
+                }
+                renderThornSpike(poseStack, vertices, camera, spike, age);
             }
-            renderThornSpike(poseStack, vertices, camera, spike, age);
+        } finally {
+            buffers.endBatch(renderType);
         }
-        buffers.endBatch(renderType);
     }
 
     private static void renderThornSpike(PoseStack poseStack, VertexConsumer vertices, Vec3 camera,
@@ -122,20 +125,23 @@ public final class FinaleWeatherEvents {
         float rotation = (float) ((spike.seed & 0xFFFFL) / 65535.0D * Math.PI);
 
         poseStack.pushPose();
-        poseStack.translate(x, y, z);
-        PoseStack.Pose pose = poseStack.last();
-        for (int plane = 0; plane < 2; plane++) {
-            float angle = rotation + plane * Mth.HALF_PI;
-            float dx = Mth.cos(angle) * width * 0.5F;
-            float dz = Mth.sin(angle) * width * 0.5F;
-            float normalX = Mth.sin(angle);
-            float normalZ = -Mth.cos(angle);
-            vertex(vertices, pose, -dx, 0.0F, -dz, 0.0F, 1.0F, fade, normalX, normalZ);
-            vertex(vertices, pose, -dx, height, -dz, 0.0F, 0.0F, fade, normalX, normalZ);
-            vertex(vertices, pose, dx, height, dz, 1.0F, 0.0F, fade, normalX, normalZ);
-            vertex(vertices, pose, dx, 0.0F, dz, 1.0F, 1.0F, fade, normalX, normalZ);
+        try {
+            poseStack.translate(x, y, z);
+            PoseStack.Pose pose = poseStack.last();
+            for (int plane = 0; plane < 2; plane++) {
+                float angle = rotation + plane * Mth.HALF_PI;
+                float dx = Mth.cos(angle) * width * 0.5F;
+                float dz = Mth.sin(angle) * width * 0.5F;
+                float normalX = Mth.sin(angle);
+                float normalZ = -Mth.cos(angle);
+                vertex(vertices, pose, -dx, 0.0F, -dz, 0.0F, 1.0F, fade, normalX, normalZ);
+                vertex(vertices, pose, -dx, height, -dz, 0.0F, 0.0F, fade, normalX, normalZ);
+                vertex(vertices, pose, dx, height, dz, 1.0F, 0.0F, fade, normalX, normalZ);
+                vertex(vertices, pose, dx, 0.0F, dz, 1.0F, 1.0F, fade, normalX, normalZ);
+            }
+        } finally {
+            poseStack.popPose();
         }
-        poseStack.popPose();
     }
 
     private static void vertex(VertexConsumer vertices, PoseStack.Pose pose,

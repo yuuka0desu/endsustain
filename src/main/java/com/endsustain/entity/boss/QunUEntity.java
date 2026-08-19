@@ -82,10 +82,6 @@ public class QunUEntity extends Pig {
                 p -> p.isAlive() && !p.isSpectator()).stream().findFirst().orElse(null);
     }
 
-    @Override public boolean hurt(DamageSource source, float amount) {
-        return super.hurt(source, amount);
-    }
-
     @Override public void addAdditionalSaveData(CompoundTag tag) {
         super.addAdditionalSaveData(tag);
         if (ownerBoss != null) tag.putUUID("EndsustainOwner", ownerBoss);

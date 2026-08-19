@@ -23,7 +23,6 @@ public final class FinalePathClientState {
             return;
         }
         storyMask = story; witnessMask = witness; tier = skillTier;
-        if (mc.screen instanceof FinalePathScreen screen) screen.refresh();
-        else mc.setScreen(new FinalePathScreen());
+        if (!(mc.screen instanceof FinalePathScreen)) mc.setScreen(new FinalePathScreen());
     }
 }

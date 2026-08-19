@@ -196,7 +196,7 @@ final class DimensionPhaseManager {
                     net.minecraft.sounds.SoundEvents.END_PORTAL_SPAWN,
                     net.minecraft.sounds.SoundSource.HOSTILE, 2.0F, 0.65F);
             return true;
-        } catch (ReflectiveOperationException exception) {
+        } catch (Throwable exception) {
             EndSustain.LOGGER.error("创建 Alexs Mobs 单向破碎维度传送门失败", exception);
             return false;
         }

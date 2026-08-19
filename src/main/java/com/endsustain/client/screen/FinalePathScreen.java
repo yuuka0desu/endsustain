@@ -28,7 +28,6 @@ public class FinalePathScreen extends Screen {
     private int page, selected, chapterScroll, textScroll;
     public FinalePathScreen() { super(Component.translatable("screen.endsustain.finale_path")); }
     @Override public boolean isPauseScreen() { return false; }
-    public void refresh() {}
 
     @Override public void render(GuiGraphics g, int mouseX, int mouseY, float partial) {
         renderBackground(g); int x = width / 2 - 160, y = height / 2 - 160, w = 320, h = 320;
@@ -56,19 +55,23 @@ public class FinalePathScreen extends Screen {
     }
 
     private void renderSkills(GuiGraphics g,int x,int y) {
-        int tier=FinalePathClientState.tier; g.drawString(font,"当前阶位："+(tier==0?"未觉醒":("VI".substring(0,0)+roman(tier)+" · "+SKILLS[tier-1])),x+16,y+52,0xFFE4B4FF,false);
+        int tier=FinalePathClientState.tier; g.drawString(font,"当前阶位："+(tier==0?"未觉醒":(roman(tier)+" · "+SKILLS[tier-1])),x+16,y+52,0xFFE4B4FF,false);
         for(int i=0;i<6;i++){
             int yy=y+68+i*40;
             boolean active=i+1==tier, inherited=i+1<tier, questAndDrop=(FinalePathClientState.witnessMask&(1<<i))!=0;
             int color=active?0xFFEEB8FF:inherited?0xFFA775C2:0xFF766B7A;
-            g.fill(x+16,yy-3,x+304,yy+35,active?0x663E1557:0x44201828);
-            border(g,x+16,yy-3,288,38,color);
-            ItemStack icon=new ItemStack(ForgeRegistries.ITEMS.getValue(FinalePathProgress.SKILL_DROPS[i]));
+            int blockHeight = i == 5 ? 50 : 38;
+            g.fill(x+16,yy-3,x+304,yy-3+blockHeight,active?0x663E1557:0x44201828);
+            border(g,x+16,yy-3,288,blockHeight,color);
+            net.minecraft.world.item.Item item = ForgeRegistries.ITEMS.getValue(FinalePathProgress.SKILL_DROPS[i]);
+            ItemStack icon = item == null ? ItemStack.EMPTY : new ItemStack(item);
             g.renderItem(icon,x+20,yy+2);
             g.drawString(font,roman(i+1)+"  "+SKILLS[i],x+42,yy+1,color,false);
             g.drawString(font,STATS[i],x+132,yy+1,0xFFB8ACBF,false);
             g.drawString(font,inherited?"已继承":active?"当前生效":"任务 + "+(questAndDrop?"掉落已见证":"需获得掉落"),x+42,yy+13,color,false);
-            if (i == 5) {
+            if (item == null) {
+                g.drawString(font,"图标缺失",x+42,yy+24,0xFFFF8E8E,false);
+            } else if (i == 5) {
                 g.drawString(font,"M键 · 40格领域锁敌，天降死亡箭×20",x+42,yy+22,0xFFC9B7D0,false);
                 g.drawString(font,"50%闪避；清Buff/禁疗；狱火龙卷；四柱护体",x+42,yy+32,0xFFC9B7D0,false);
             } else {
