@@ -10,12 +10,12 @@
     "ServerChunkCacheMixin",
     "TidalHookEntityMixin",
     "LivingEntityTerminalStateMixin",
-    "ForgeHooksTerminalDeathMixin",
     "ServerLevelTimeStopMixin",
     "ServerGamePacketTimeStopMixin"
   ],
   "client": [
-    "LightTextureMixin"
+    "LightTextureMixin",
+    "AbnormalStateMixin"
   ],
   "injectors": {
     "defaultRequire": 1

@@ -27,6 +27,14 @@ public final class EntityHealthStateBridge {
     public static boolean zeroActiveHealth(LivingEntity target) {
         if (target.getHealth() <= 0.0F) return true;
 
+        if (VANILLA_HEALTH != null) {
+            try {
+                target.getEntityData().set(VANILLA_HEALTH, 0.0F);
+                if (target.getHealth() <= 0.0F) return true;
+            } catch (RuntimeException ignored) {
+            }
+        }
+
         EntityDataAccessor<?> cached = RESOLVED_HEALTH.get(target.getClass());
         if (cached != null && tryAccessor(target, cached)) return true;
 
@@ -39,6 +47,41 @@ public final class EntityHealthStateBridge {
             }
         }
         return target.getHealth() <= 0.0F;
+    }
+
+    /**
+     * 把实体的生命同步数据直接写为指定值，绕过 setHealth 覆写与 mixin 拦截。
+     * 固定使用原版生命 accessor（Float 类型），不做泛化匹配，
+     * 避免把数值误写入其他 Double 型同步数据导致类型污染。
+     */
+    public static boolean writeActiveHealth(LivingEntity target, float value) {
+        EntityDataAccessor<Float> vanilla = VANILLA_HEALTH;
+        if (vanilla == null) return false;
+        try {
+            target.getEntityData().set(vanilla, Math.max(0.0F, value));
+            return true;
+        } catch (RuntimeException exception) {
+            return false;
+        }
+    }
+
+    /** 原版生命同步 accessor：生产环境 SRG 名 f_20961_，开发环境 DATA_HEALTH_ID。 */
+    private static final EntityDataAccessor<Float> VANILLA_HEALTH = resolveVanillaHealth();
+
+    private static EntityDataAccessor<Float> resolveVanillaHealth() {
+        for (String name : new String[]{"f_20961_", "DATA_HEALTH_ID"}) {
+            try {
+                Field field = LivingEntity.class.getDeclaredField(name);
+                field.setAccessible(true);
+                Object value = field.get(null);
+                if (value instanceof EntityDataAccessor<?> accessor) {
+                    return (EntityDataAccessor<Float>) accessor;
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        EndSustain.LOGGER.warn("未能解析原版生命同步字段，终焉生命写入退化为 setHealth");
+        return null;
     }
 
     private static boolean tryAccessor(LivingEntity target, EntityDataAccessor<?> accessor) {

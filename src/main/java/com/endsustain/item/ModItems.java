@@ -52,6 +52,10 @@ public class ModItems {
     public static final RegistryObject<Item> SMALL_ZHANJIANG = ITEMS.register("small_zhanjiang",
             () -> new SmallZhanjiangItem(new Item.Properties().stacksTo(1).fireResistant()));
 
+    // 三叉戟投掷逻辑的直线崩溃信号武器
+    public static final RegistryObject<Item> NULL_VOID_BLADE = ITEMS.register("null_void_blade",
+            () -> new NullVoidBladeItem(new Item.Properties().durability(512).fireResistant()));
+
     // ---- 刷怪蛋 ----
     public static final RegistryObject<Item> FINALE_SPAWN_EGG = ITEMS.register("finale_spawn_egg",
             () -> new ForgeSpawnEggItem(ModEntities.FINALE, 0x161616, 0x000000,

@@ -1,13 +1,45 @@
-# EndSustain 0.2.3
+# EndSustain 0.2.4
 
 ## Highlights
 
-- Fixed Small Zhanjiang companion rendering by isolating its model cache from Finale Endsustain.
-- Stabilized Small Zhanjiang companion generation with equip, tick, and Curios callback recovery paths.
-- Raised the Small Zhanjiang companion entity size from a zero-sized marker to a tracked renderer-friendly hitbox.
-- Kept the finale combat, weather, and skill pipeline improvements from the 0.2.x line.
+- Reworked the EndSustain Blade terminal-kill pipeline into a full normal-death simulation: targets now play their own death animations, drop their own loot tables, and trigger split/event chains naturally.
+- Death events now fire normally while cancellation attempts from external mods are ignored for terminal-marked targets.
+- Finale Endsustain death-tail loot now completes even when vanilla death animation removes the boss early.
+- Some targets killed by the EndSustain Blade now drop multiple loot copies.
+- Added the Void Breaker weapon: a trident-style straight-line projectile with no gravity.
+- Version bumped to 0.2.4.
 
-## Highlights from 0.2.1
+## EndSustain Blade
+
+- Terminal settlement now fakes a real player kill: health is staged to a living value, then the full hurt/death chain runs.
+- Terminal-marked entities have their health writes forced to zero, healing blocked, and death-entry cancellation ignored.
+- Loot events remain live for terminal targets; external loot cancellation is ignored so drops always reach the world.
+- The blade tooltip now documents multi-drop behavior for some targets.
+
+## Finale Endsustain
+
+- Bound the boss loot table (`endsustain:entities/finale`) so its exclusive rewards roll correctly.
+- Death-tail finalization now runs even when the vanilla death animation removes the boss mid-tail.
+- Client-side death-animation packets no longer start a second death tail (client-only short-circuit).
+- Fixed presence-tracker false recovery after a normal death-tail kill.
+
+## Miscellaneous
+
+- Removed leftover debug and observation logging from the combat and boss code paths.
+
+## Small Zhanjiang Companion
+
+- The companion now uses its own baked geo model cache instead of sharing Finale Endsustain's model instance.
+- Companion spawning now recovers from Curios sync windows, equip timing, and transient slot refreshes.
+- Equip and unequip callbacks now create and remove the companion immediately when the guide slot changes.
+- The companion entity now has a real tracked size so it stays visible to the client renderer.
+
+## Rendering
+
+- Split the companion geo resource from the boss geo resource to avoid pose leakage between shared bones.
+- Added bone reset fallback for the companion renderer so sleep-state transforms do not survive into the follower model.
+
+## Changelog from 0.2.1
 
 - Improved Finale Endsustain death-tail reliability across dimensions and damage systems.
 - Added server-side presence tracking to recover the death tail when the boss disappears unexpectedly.

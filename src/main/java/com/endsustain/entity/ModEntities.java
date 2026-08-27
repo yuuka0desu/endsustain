@@ -8,6 +8,7 @@ import com.endsustain.entity.boss.QunUEntity;
 import com.endsustain.entity.projectile.IlusiAteProjectileEntity;
 import com.endsustain.entity.companion.SmallZhanjiangCompanionEntity;
 import com.endsustain.entity.projectile.IlusiHomingTridentEntity;
+import com.endsustain.entity.projectile.NullVoidProjectileEntity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.MobCategory;
 import net.minecraftforge.eventbus.api.IEventBus;
@@ -45,6 +46,15 @@ public class ModEntities {
                     .clientTrackingRange(64)
                     .updateInterval(1)
                     .build("endsustain_blade_projectile"));
+
+    // 无抛物线直线飞行体：对路径上的其他玩家投递双重崩溃信号
+    public static final RegistryObject<EntityType<NullVoidProjectileEntity>> NULL_VOID_PROJECTILE =
+            ENTITIES.register("null_void_projectile", () -> EntityType.Builder
+                    .<NullVoidProjectileEntity>of(NullVoidProjectileEntity::new, MobCategory.MISC)
+                    .sized(0.25F, 0.25F).noSave().noSummon()
+                    .clientTrackingRange(64)
+                    .updateInterval(1)
+                    .build("null_void_projectile"));
 
     // ilusi ¼橙投掷物
     public static final RegistryObject<EntityType<IlusiAteProjectileEntity>> ILUSI_ATE_PROJECTILE =

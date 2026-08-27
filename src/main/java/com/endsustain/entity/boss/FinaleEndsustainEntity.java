@@ -158,8 +158,8 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
     private int passiveCrystalAnchorCooldown;
     @Nullable private Vec3 starStrikeDomainCenter;
     private int starStrikeDomainTicks;
-    private boolean combatDeathTailStarted;
-    private boolean combatDeathTailResolved;
+    private volatile boolean combatDeathTailStarted;
+    private volatile boolean combatDeathTailResolved;
     private boolean tailHealthWrite;
     @Nullable private net.minecraft.world.damagesource.DamageSource combatDeathSource;
     private int ultimateCooldown;
@@ -170,6 +170,23 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
         super(type, level);
         getPersistentData().putUUID("EncounterId", encounterId);
         this.xpReward = 5000;
+        bindLootTable();
+    }
+
+    /** Mob.getLootTable 为 final、lootTable 字段为 private：通过反射绑定战利品表。 */
+    private void bindLootTable() {
+        net.minecraft.resources.ResourceLocation table =
+                new net.minecraft.resources.ResourceLocation(com.endsustain.EndSustain.MOD_ID, "entities/finale");
+        for (String name : new String[]{"f_21355_", "lootTable"}) {
+            try {
+                java.lang.reflect.Field field = net.minecraft.world.entity.Mob.class.getDeclaredField(name);
+                field.setAccessible(true);
+                field.set(this, table);
+                return;
+            } catch (Throwable ignored) {
+            }
+        }
+        com.endsustain.EndSustain.LOGGER.warn("[落幕终焉] 蘸酱Boss 战利品表绑定失败");
     }
 
     public static AttributeSupplier.Builder createAttributes() {
@@ -788,7 +805,7 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
                 this.getBoundingBox().inflate(96.0D),
                 entity -> entity.isAlive()
                         && entity.getType() == starArrowType
-                        && entity.getTags().contains("endsustain_star_arrow")
+                        && entity.getTags().contains("endsustain_tail_kill_star_arrow")
         );
         if (starArrows.isEmpty()) return;
 
@@ -1360,11 +1377,10 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
     public boolean isCombatDeathTailResolved() { return combatDeathTailResolved; }
     public Player getLastAttackingPlayer() { return this.lastHurtByPlayer; }
 
-    /** 参考亚波伦 setDoom：血量降到阈值时置位同步数据，由 tick 驱动尾杀，不依赖死亡事件。 */
     public boolean getTailKillDoom() { return this.entityData.get(TAIL_KILL_DOOM); }
     public void setTailKillDoom(boolean value) { this.entityData.set(TAIL_KILL_DOOM, value); }
 
-    /** 死亡瞬间向最后攻击玩家发射早期版本的定向星辰矢。 */
+    /** 死亡瞬间向最后攻击玩家发射星辰矢，并用星矢公开 API 锁定目标追踪。 */
     private void fireImmediateStarArrowsAtPlayer() {
         if (!(this.level() instanceof ServerLevel server)) return;
         Player target = this.lastHurtByPlayer;
@@ -1383,19 +1399,20 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
             Vec3 spawn = new Vec3(this.getX() + (this.random.nextDouble() - 0.5D) * 1.5D,
                     this.getEyeY() + 0.25D + i * 0.03D,
                     this.getZ() + (this.random.nextDouble() - 0.5D) * 1.5D);
-            Vec3 aim = target.getEyePosition().add(
-                    (this.random.nextDouble() - 0.5D) * 0.8D,
-                    (this.random.nextDouble() - 0.5D) * 0.5D,
-                    (this.random.nextDouble() - 0.5D) * 0.8D).subtract(spawn).normalize();
             Entity starArrow = starArrowType.create(server);
             if (starArrow == null) continue;
             starArrow.setPos(spawn.x, spawn.y, spawn.z);
-            starArrow.addTag("endsustain_star_arrow");
+            starArrow.addTag("endsustain_tail_kill_star_arrow");
+            // 星矢公开 API：锁定目标追踪（此前从未设置目标，弹体无法靠近玩家）。
+            try {
+                starArrow.getClass().getMethod("setTarget", int.class).invoke(starArrow, target.getId());
+            } catch (ReflectiveOperationException ignored) {}
             if (starArrow instanceof net.minecraft.world.entity.projectile.Projectile projectile) {
                 projectile.setOwner(this);
+                Vec3 aim = target.getEyePosition().subtract(spawn).normalize();
                 projectile.shoot(aim.x, aim.y, aim.z, 3.0F, 0.2F);
             } else {
-                starArrow.setDeltaMovement(aim.scale(3.0D));
+                starArrow.setDeltaMovement(target.getEyePosition().subtract(spawn).normalize().scale(3.0D));
             }
             try {
                 starArrow.getClass().getMethod("setPower", float.class).invoke(starArrow, 10.0F);
@@ -1412,6 +1429,8 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
     }
 
     public boolean beginCombatDeathTail(net.minecraft.world.damagesource.DamageSource source) {
+        // 死亡尾仅在服务端执行；客户端死亡动画事件（handleEntityEvent）触发的 die 调用不得开启第二次尾杀。
+        if (this.level().isClientSide) return false;
         if (DimensionPhaseManager.isTransitioning(this) || combatDeathTailResolved) return false;
         if (combatDeathTailStarted) return true;
         TrueKillUtil.cancelPending(this);
@@ -1448,6 +1467,14 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
             return;
         }
         if (reason == Entity.RemovalReason.KILLED
+                && combatDeathTailStarted && !combatDeathTailResolved) {
+            // 原版死亡动画（deathTime）会在尾杀期间自动 KILLED 移除：
+            // 先完成死亡尾结算（掉落），再真正移除实体。
+            finalizeCombatDeath();
+            super.remove(reason);
+            return;
+        }
+        if (reason == Entity.RemovalReason.KILLED
                 && !combatDeathTailStarted && !combatDeathTailResolved
                 && !DimensionPhaseManager.isTransitioning(this)) {
             net.minecraft.world.damagesource.DamageSource source = this.lastHurtByPlayer != null
@@ -1461,6 +1488,7 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
     @Override
     public void die(net.minecraft.world.damagesource.DamageSource source) {
         if (DimensionPhaseManager.isTransitioning(this)) return;
+        if (combatDeathTailResolved) return;
         if (beginCombatDeathTail(source)) return;
         if (combatDeathTailStarted && !combatDeathTailResolved) return;
         super.die(source);

@@ -221,7 +221,8 @@ public class EndsustainBladeEntity extends Projectile implements ItemSupplier {
                 net.minecraft.world.damagesource.DamageSource source = this.damageSources().playerAttack(owner);
                 boss.beginCombatDeathTail(source);
             } else {
-                TrueKillUtil.forceKill(target, this.damageSources().fellOutOfWorld(), owner,
+                // 使用玩家攻击源：loot 上下文的 killer 正确，killed_by_player 条件掉落完整生效。
+                TrueKillUtil.forceKill(target, this.damageSources().playerAttack(owner), owner,
                         (float) Integer.MAX_VALUE, overflow);
             }
         }

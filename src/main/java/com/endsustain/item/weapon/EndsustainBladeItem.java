@@ -153,6 +153,7 @@ public class EndsustainBladeItem extends TridentItem {
         if (damage > Integer.MAX_VALUE) {
             tooltip.add(Component.literal("已突破 32 位上限：命中将触发终焉强杀"));
         }
+        tooltip.add(Component.literal("被终焉之刃击杀的部分目标会掉落多倍掉落物"));
         tooltip.add(Component.literal("兼容剑与三叉戟附魔 · 自带忠诚 III"));
     }
 }

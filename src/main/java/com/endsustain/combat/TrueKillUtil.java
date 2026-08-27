@@ -42,24 +42,18 @@ public final class TrueKillUtil {
         }
 
         applyKillCredit(target, attacker);
+
+        // 非玩家目标：交给本模组终焉结算 API。
+        // 死亡逻辑（die）会正常执行，死亡掉落由原版死亡链调用；
+        // 任何事件层防御都被 mixin 层拦截，最终由 Entity 层移除兜底。
+        if (!(target instanceof ServerPlayer)) {
+            EndsustainTerminal.terminate(target, source, attacker);
+            return;
+        }
+
         target.setInvulnerable(false);
         target.invulnerableTime = 0;
         target.setAbsorptionAmount(0.0F);
-
-        // Non-player entities keep a normal hurt callback before terminal resolution.
-        // Players use one explicit death entry below, avoiding a first death from hurt()
-        // followed by another death from die().
-        if (!(target instanceof ServerPlayer)) {
-            try {
-                target.hurt(source, damage);
-            } catch (ClassCastException incompatibleHealthValue) {
-                EndSustain.LOGGER.warn("目标 {} 的外部生命读取类型不兼容，直接进入通用终止状态",
-                        target.getType());
-            }
-        }
-        target.invulnerableTime = 0;
-        if (target.isRemoved()) return;
-
         target.getPersistentData().putBoolean(TERMINAL_STATE_KEY, true);
         if (target.getHealth() > 0.0F) {
             target.setHealth(0.0F);
@@ -81,32 +75,18 @@ public final class TrueKillUtil {
                 EndSustain.LOGGER.error("玩家死亡事务建立失败：{}，维度={}",
                         target.getType(), target.level().dimension().location());
             }
-            return;
-        }
-
-        if (target.getHealth() <= 0.0F) {
-            // Players and ordinary entities should enter their real death transaction immediately.
-            // Delayed/custom bosses that reject this first call remain in the retry queue below.
-            target.die(source);
-            if (target.isRemoved()) {
-                target.getPersistentData().remove(TERMINAL_STATE_KEY);
-                return;
-            }
-            if (deathTransactionStarted(target)) {
-                EndSustain.LOGGER.info("终焉伤害已建立目标的真实死亡事务：{}", target.getType());
-                return;
-            }
-            PENDING_DEATHS.putIfAbsent(target.getUUID(),
-                    new PendingDeath(target, source, attacker, FINALIZATION_TIMEOUT));
-            EndSustain.LOGGER.info("终焉伤害已同步目标生命状态，等待实体自身完成死亡：{}",
-                    target.getType());
-        } else {
-            EndSustain.LOGGER.warn("终焉伤害未找到目标 {} 当前使用的生命同步状态，剩余生命={}",
-                    target.getType(), target.getHealth());
         }
         } finally {
             IN_PROGRESS.remove(targetId);
         }
+    }
+
+    /** 终焉结算未能在当前 tick 移除目标时，挂入逐 tick 重试队列。 */
+    public static void scheduleRetry(LivingEntity target, DamageSource source, LivingEntity attacker) {
+        PENDING_DEATHS.putIfAbsent(target.getUUID(),
+                new PendingDeath(target, source, attacker, FINALIZATION_TIMEOUT));
+        EndSustain.LOGGER.info("终焉结算挂起：{} 存在额外防御，已进入逐 tick 强制结算队列",
+                target.getType());
     }
 
     public static boolean isPending(LivingEntity target) {
@@ -124,34 +104,27 @@ public final class TrueKillUtil {
             PendingDeath pending = iterator.next().getValue();
             LivingEntity target = pending.target;
 
-            if (target.isRemoved() || target.level().getServer() != server || pending.ticksLeft-- <= 0) {
-                target.getPersistentData().remove(TERMINAL_STATE_KEY);
+            if (target.isRemoved() || target.level().getServer() != server) {
+                EndsustainTerminal.unmark(target);
                 iterator.remove();
                 continue;
             }
+            if (pending.ticksLeft-- <= 0) {
+                // 超时仍未自然死亡：Entity 层强制移除收尾
+                target.remove(net.minecraft.world.entity.Entity.RemovalReason.KILLED);
+                if (!target.isRemoved()) target.discard();
+                EndsustainTerminal.unmark(target);
+                iterator.remove();
+                EndSustain.LOGGER.info("终焉结算超时，已强制移除：{}", target.getType());
+                continue;
+            }
 
-            target.getPersistentData().putBoolean(TERMINAL_STATE_KEY, true);
             if (deathTransactionStarted(target)) {
                 iterator.remove();
                 continue;
             }
             applyKillCredit(target, pending.attacker);
-            target.setInvulnerable(false);
-            target.invulnerableTime = 0;
-            target.setAbsorptionAmount(0.0F);
-
-            if (target.getHealth() > 0.0F) {
-                target.setHealth(0.0F);
-                if (target.getHealth() > 0.0F) {
-                    EntityHealthStateBridge.zeroActiveHealth(target);
-                }
-            }
-
-            // Give custom entities one natural entity tick before asking their own public death entry to continue.
-            if (pending.ticksElapsed++ < NATURAL_TICK_DELAY || target.getHealth() > 0.0F) continue;
-
-            target.die(pending.source);
-            if (deathTransactionStarted(target)) {
+            if (EndsustainTerminal.retryTick(target, pending.source, pending.attacker)) {
                 iterator.remove();
             }
         }

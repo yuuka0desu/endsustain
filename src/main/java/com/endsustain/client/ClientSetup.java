@@ -30,6 +30,7 @@ public class ClientSetup {
         event.registerEntityRenderer(ModEntities.ILUSI_ATE_PROJECTILE.get(), NoopRenderer::new);
         event.registerEntityRenderer(ModEntities.ILUSI_HOMING_TRIDENT.get(), NoopRenderer::new);
         event.registerEntityRenderer(ModEntities.SPELL_PROJECTILE.get(), NoopRenderer::new);
+        event.registerEntityRenderer(ModEntities.NULL_VOID_PROJECTILE.get(), NoopRenderer::new);
     }
 
     @SubscribeEvent

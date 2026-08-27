@@ -76,6 +76,7 @@ public class ForgeBusEvents {
         if (presence == null) return;
         if (reason != Entity.RemovalReason.KILLED
                 || boss.isCombatDeathTailResolved()
+                || boss.isCombatDeathTailStarted()
                 || reason == Entity.RemovalReason.DISCARDED
                 || reason == Entity.RemovalReason.UNLOADED_TO_CHUNK
                 || reason == Entity.RemovalReason.CHANGED_DIMENSION) {

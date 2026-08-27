@@ -1,19 +1,26 @@
 package com.endsustain.mixin;
 
+import com.endsustain.combat.EndsustainTerminal;
 import com.endsustain.combat.TerminalDeathStateAccess;
-import com.endsustain.combat.TrueKillUtil;
+import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraftforge.common.ForgeHooks;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.ModifyArg;
+import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 /**
- * Locks recovery while terminal damage is being finalized. Public health and
- * alive/dead queries remain untouched so clients only see a death after the
- * entity's real die/tickDeath transaction has started.
+ * 终焉标记实体的原版方法内拦截，优先级高于事件层防御：
+ * - setHealth：正数写入被改写为 0，回血无入口。
+ * - setAbsorptionAmount：正数吸收被改写为 0。
+ * - heal：直接取消。
+ * - die：清除预置死标志，强制放行死亡主体（正常调用死亡掉落/经验掉落）。
+ * - ForgeHooks.onLivingDeath：对标记实体恒返回 false，任何 LivingDeathEvent 取消均无效。
  */
 @Mixin(value = LivingEntity.class, priority = 2000)
 public abstract class LivingEntityTerminalStateMixin implements TerminalDeathStateAccess {
@@ -33,12 +40,18 @@ public abstract class LivingEntityTerminalStateMixin implements TerminalDeathSta
     @Unique
     private boolean endsustain$terminalState() {
         return ((LivingEntity) (Object) this).getPersistentData()
-                .getBoolean(TrueKillUtil.TERMINAL_STATE_KEY);
+                .getBoolean(EndsustainTerminal.TERMINAL_KEY);
     }
 
-    @Inject(method = "setHealth", at = @At("HEAD"), cancellable = true)
-    private void endsustain$blockPositiveHealth(float health, CallbackInfo ci) {
-        if (endsustain$terminalState() && health > 0.0F) ci.cancel();
+    @ModifyArg(method = "setHealth", at = @At(value = "INVOKE",
+            target = "Lnet/minecraft/util/Mth;clamp(FFF)F"), index = 0)
+    private float endsustain$forceZeroHealth(float health) {
+        return endsustain$terminalState() ? 0.0F : health;
+    }
+
+    @Inject(method = "setAbsorptionAmount", at = @At("HEAD"), cancellable = true)
+    private void endsustain$blockPositiveAbsorption(float amount, CallbackInfo ci) {
+        if (endsustain$terminalState() && amount > 0.0F) ci.cancel();
     }
 
     @Inject(method = "heal", at = @At("HEAD"), cancellable = true)
@@ -46,8 +59,35 @@ public abstract class LivingEntityTerminalStateMixin implements TerminalDeathSta
         if (endsustain$terminalState()) ci.cancel();
     }
 
-    @Inject(method = "setAbsorptionAmount", at = @At("HEAD"), cancellable = true)
-    private void endsustain$blockPositiveAbsorption(float amount, CallbackInfo ci) {
-        if (endsustain$terminalState() && amount > 0.0F) ci.cancel();
+    @Inject(method = "die", at = @At("HEAD"))
+    private void endsustain$clearDeadFlag(DamageSource source, CallbackInfo ci) {
+        if (endsustain$terminalState()) {
+            this.dead = false;
+        }
+    }
+
+    @Redirect(method = "dropAllDeathLoot", at = @At(value = "INVOKE", remap = false,
+            target = "Lnet/minecraftforge/common/ForgeHooks;onLivingDrops(Lnet/minecraft/world/entity/LivingEntity;Lnet/minecraft/world/damagesource/DamageSource;Ljava/util/Collection;IZ)Z"))
+    private boolean endsustain$forceLootDrops(LivingEntity entity, DamageSource source,
+                                              java.util.Collection<net.minecraft.world.entity.item.ItemEntity> drops,
+                                              int looting, boolean recentlyHit) {
+        boolean canceled = ForgeHooks.onLivingDrops(entity, source, drops, looting, recentlyHit);
+        if (endsustain$terminalState()) {
+            // 标记实体无视掉落事件取消：掉落正常进入世界
+            return false;
+        }
+        return canceled;
+    }
+
+    @Redirect(method = "die", at = @At(value = "INVOKE", remap = false,
+            target = "Lnet/minecraftforge/common/ForgeHooks;onLivingDeath(Lnet/minecraft/world/entity/LivingEntity;Lnet/minecraft/world/damagesource/DamageSource;)Z"))
+    private boolean endsustain$forceDeathEntry(LivingEntity entity, DamageSource source) {
+        if (endsustain$terminalState()) {
+            // 仍触发死亡事件链（掉落钩子、任务统计、分裂等后续事件正常发生），
+            // 但无视返回值——任何取消死亡的尝试对标记实体无效。
+            ForgeHooks.onLivingDeath(entity, source);
+            return false;
+        }
+        return ForgeHooks.onLivingDeath(entity, source);
     }
 }

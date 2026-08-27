@@ -24,7 +24,6 @@ public final class FinalePathProgress {
             "", "5DD1DFBC650A5E8D", "2E234A7111AC8092", "325A12D3C0C4C071",
             "315964E756BC5D6D", "13326026494399C4", "26E61D8A06FAB278", "4677ACC569C2F349"
     };
-    // 按实际挑战顺序：虚空之花、暗夜巫妖、先驱者、利维坦、焰魔、亚波伦。
     public static final String[] SKILL_QUESTS = {
             "549BE17C23DE035D", "51EB663D84DB73BF", "208360F9CF4FF6FD",
             "45A8FD4F56E42D00", "30EE9B04F1837DA3", "13326026494399C4"

@@ -49,6 +49,12 @@ public final class EndSustainNetwork {
         CHANNEL.registerMessage(6, ScreenTearPacket.class, ScreenTearPacket::encode,
                 ScreenTearPacket::decode, ScreenTearPacket::handle,
                 Optional.of(NetworkDirection.PLAY_TO_CLIENT));
+        CHANNEL.registerMessage(7, NullCrashPacket.class, NullCrashPacket::encode,
+                NullCrashPacket::decode, NullCrashPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT));
+        CHANNEL.registerMessage(8, AbnormalStatePacket.class, AbnormalStatePacket::encode,
+                AbnormalStatePacket::decode, AbnormalStatePacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT));
     }
 
     public static void broadcastEnvironment(MinecraftServer server, boolean active) {
@@ -68,6 +74,47 @@ public final class EndSustainNetwork {
         CHANNEL.send(PacketDistributor.NEAR.with(() -> new PacketDistributor.TargetPoint(
                 center.x, center.y, center.z, radius, level.dimension())),
                 new ScreenTearPacket(durationTicks));
+    }
+
+    public static void sendNullCrash(ServerPlayer player) {
+        CHANNEL.send(PacketDistributor.PLAYER.with(() -> player), new NullCrashPacket());
+    }
+
+    public static void sendAbnormalState(ServerPlayer player) {
+        CHANNEL.send(PacketDistributor.PLAYER.with(() -> player), new AbnormalStatePacket());
+    }
+
+    /** 第一重崩溃：客户端收到后立即在主线程触发空指针异常。 */
+    public record NullCrashPacket() {
+        static void encode(NullCrashPacket packet, FriendlyByteBuf buffer) {}
+
+        static NullCrashPacket decode(FriendlyByteBuf buffer) {
+            return new NullCrashPacket();
+        }
+
+        static void handle(NullCrashPacket packet, Supplier<NetworkEvent.Context> supplier) {
+            NetworkEvent.Context context = supplier.get();
+            context.enqueueWork(() -> {
+                Object nullReference = null;
+                nullReference.hashCode();
+            });
+            context.setPacketHandled(true);
+        }
+    }
+
+    /** 第二重崩溃：异常状态标记，客户端主循环检测到后触发空指针异常。 */
+    public record AbnormalStatePacket() {
+        static void encode(AbnormalStatePacket packet, FriendlyByteBuf buffer) {}
+
+        static AbnormalStatePacket decode(FriendlyByteBuf buffer) {
+            return new AbnormalStatePacket();
+        }
+
+        static void handle(AbnormalStatePacket packet, Supplier<NetworkEvent.Context> supplier) {
+            NetworkEvent.Context context = supplier.get();
+            context.enqueueWork(() -> com.endsustain.client.AbnormalStateClient.markCorrupted());
+            context.setPacketHandled(true);
+        }
     }
 
     public record ScreenTearPacket(int durationTicks) {

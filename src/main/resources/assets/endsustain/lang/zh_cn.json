@@ -2,6 +2,8 @@
     "itemGroup.endsustain": "落幕终焉",
     "item.endsustain.endsustain_core": "终焉核心",
     "item.endsustain.endsustain_blade": "终焉之刃",
+    "item.endsustain.null_void_blade": "虚空断刃",
+    "entity.endsustain.null_void_projectile": "虚空断矢",
     "entity.endsustain.finale": "落幕之终焉·末影蘸酱",
     "item.endsustain.finale_spawn_egg": "落幕之终焉·末影蘸酱 刷怪蛋",
     "item.endsustain.ilusi": "ilusi 可爱橙",
