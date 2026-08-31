@@ -40,6 +40,11 @@ public class EndsustainBladeEntity extends Projectile implements ItemSupplier {
     private static final String CARRIED_STACK_KEY = "CarriedBlade";
     private static final Map<UUID, BladePresence> PRESENCE = new HashMap<>();
 
+    /** 服务器停止时清理刀气存在登记，防止跨存档残留。 */
+    public static void clearPresence() {
+        PRESENCE.clear();
+    }
+
     public static void tickPresence(MinecraftServer server) {
         Iterator<Map.Entry<UUID, BladePresence>> iterator = PRESENCE.entrySet().iterator();
         while (iterator.hasNext()) {

@@ -36,7 +36,7 @@ public final class PigBladeLogic {
      * 原版区域伤害置 0，命中与猪化 / Boss 召唤 / 随机负面 / 猪音效等行为由 PigSwordTracker 统一结算。
      */
     public static EntitySlashEffect launch(Player player, Vec3 start, Vec3 direction, double damage) {
-        ServerLevel level = (ServerLevel) player.level();
+        if (!(player.level() instanceof ServerLevel level)) return null;
         EntitySlashEffect sword = SakuraEnd.doSlash(player, 0.0F, Vec3.ZERO, false, false, 0.0D);
         if (sword == null) {
             com.endsustain.EndSustain.LOGGER.warn("[猪咪幻影剑] 原版剑气生成失败");
@@ -49,7 +49,7 @@ public final class PigBladeLogic {
         // 标签标记：拥有此标签的幻影剑触发猪化 / 召唤 / 随机负面等自定义行为
         sword.addTag(PIG_SWORD_TAG);
         PigSwordTracker.track(sword, player, damage, hasPigForce(player));
-        com.endsustain.EndSustain.LOGGER.info("[猪咪幻影剑] 发射：起点={}，伤害={}，实体={}，标签={}",
+        com.endsustain.EndSustain.LOGGER.debug("[猪咪幻影剑] 发射：起点={}，伤害={}，实体={}，标签={}",
                 start, damage, sword.getId(), sword.getTags());
         return sword;
     }

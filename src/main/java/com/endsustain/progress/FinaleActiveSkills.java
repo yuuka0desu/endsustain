@@ -73,6 +73,13 @@ public final class FinaleActiveSkills {
     private static final List<PendingDomainArrow> PENDING_DOMAIN_ARROWS = new ArrayList<>();
     private static final java.util.Map<java.util.UUID, CachedPillarProtection> PILLAR_PROTECTION_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
 
+    /** 服务器停止时清理待结算队列与缓存，防止跨存档残留。 */
+    public static void clearState() {
+        PENDING_THORNS.clear();
+        PENDING_DOMAIN_ARROWS.clear();
+        PILLAR_PROTECTION_CACHE.clear();
+    }
+
     private FinaleActiveSkills() {}
 
     public static void trigger(ServerPlayer player, int skill) {

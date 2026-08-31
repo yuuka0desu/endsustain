@@ -140,6 +140,12 @@ public final class TrueKillUtil {
         IN_PROGRESS.remove(target.getUUID());
     }
 
+    /** 服务器停止时清理全部挂起状态，防止跨存档残留。 */
+    public static void clearAll() {
+        PENDING_DEATHS.clear();
+        IN_PROGRESS.clear();
+    }
+
     public static void tickPendingDeaths(MinecraftServer server) {
         Iterator<Map.Entry<UUID, PendingDeath>> iterator = PENDING_DEATHS.entrySet().iterator();
         while (iterator.hasNext()) {

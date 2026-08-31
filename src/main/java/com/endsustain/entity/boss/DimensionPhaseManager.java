@@ -27,7 +27,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
-final class DimensionPhaseManager {
+public final class DimensionPhaseManager {
     private static final String NETHER_STAGE = "EndsustainOfficialEnteredNether";
     private static final String OVERWORLD_STAGE = "EndsustainOfficialEnteredOverworld";
     private static final Map<UUID, PendingTransfer> PENDING = new HashMap<>();
@@ -37,6 +37,11 @@ final class DimensionPhaseManager {
     static boolean isTransitioning(FinaleEndsustainEntity boss) {
         return PENDING.containsKey(boss.getUUID())
                 || boss.getPersistentData().getBoolean("EndsustainDimensionTransition");
+    }
+
+    /** 服务器停止时清理挂起的维度传送任务。 */
+    public static void clear() {
+        PENDING.clear();
     }
 
     static boolean tick(FinaleEndsustainEntity boss) {

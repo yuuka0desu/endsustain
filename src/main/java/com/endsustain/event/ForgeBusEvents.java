@@ -63,6 +63,11 @@ public class ForgeBusEvents {
     private static boolean compatInitialized = false;
     private static final Map<UUID, FinalePresence> FINALE_PRESENCE = new HashMap<>();
 
+    /** 服务器停止时清理蘸酱存在登记，防止跨存档残留。 */
+    public static void cleanupFinalePresence() {
+        FINALE_PRESENCE.clear();
+    }
+
     public static void observeFinaleBoss(FinaleEndsustainEntity boss) {
         if (boss.level().isClientSide || boss.isRemoved()) return;
         if (!boss.isEnvironmentActive()) return;

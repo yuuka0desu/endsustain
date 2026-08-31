@@ -15,8 +15,12 @@ import net.minecraft.world.entity.monster.Monster;
 import net.minecraft.world.entity.player.Player;
 import net.minecraftforge.registries.ForgeRegistries;
 
+import java.lang.reflect.Method;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 你已猪咪 —— Boss 分支：僵尸猪人仆从（Goety zpiglin_servant）。
@@ -37,6 +41,18 @@ public final class PigMinionLogic {
     public static final int MAX_MINIONS = 10;
     public static final float CONVERT_MAX_HEALTH = 40.0F;
 
+    /** 仆从登记表：维度 → 存活仆从实体 ID 集合（避免全实体遍历计数）。 */
+    private static final Map<ServerLevel, Set<Integer>> MINION_REGISTRY = new ConcurrentHashMap<>();
+
+    /** Goety 反射方法缓存（一次解析，后续复用；解析失败置 null 不再重试）。 */
+    private static volatile Method setTrueOwnerMethod;
+    private static volatile Method setOwnerIdMethod;
+    private static volatile Method setHasLifespanMethod;
+    private static volatile Method setLifespanMethod;
+    private static volatile Method overrideSetTargetMethod;
+    private static volatile boolean reflectionResolved;
+    private static volatile boolean warnedOnce;
+
     private PigMinionLogic() {
     }
 
@@ -45,7 +61,7 @@ public final class PigMinionLogic {
         if (!(boss.level() instanceof ServerLevel level) || boss.level().isClientSide()) return;
         int existing = countMinions(level);
         if (existing > 0) {
-            com.endsustain.EndSustain.LOGGER.info("[猪咪仆从] 场上已有 {} 个仆从存活，跳过召唤", existing);
+            com.endsustain.EndSustain.LOGGER.debug("[猪咪仆从] 场上已有 {} 个仆从存活，跳过召唤", existing);
             return;
         }
         EntityType<?> type = ForgeRegistries.ENTITY_TYPES.getValue(GOETY_ZPIGLIN);
@@ -80,41 +96,83 @@ public final class PigMinionLogic {
             boolean added = level.addFreshEntity(minion);
             if (added) {
                 spawned++;
+                registerMinion(level, minion);
                 level.sendParticles(ParticleTypes.WITCH, minion.getX(), minion.getY() + 1.0D, minion.getZ(),
                         12, 0.3D, 0.5D, 0.3D, 0.08D);
             }
         }
-        com.endsustain.EndSustain.LOGGER.info("[猪咪仆从] 召唤完成：{} / 3，Boss={}", spawned, boss.getName().getString());
+        com.endsustain.EndSustain.LOGGER.debug("[猪咪仆从] 召唤完成：{} / 3，Boss={}", spawned, boss.getName().getString());
         if (spawned > 0) {
             level.playSound(null, boss.blockPosition(), SoundEvents.PIG_AMBIENT,
                     SoundSource.HOSTILE, 1.2F, 1.0F);
         }
     }
 
-    /** 通过反射绑定 Goety 仆从的主人 / 1 分钟寿命 / 攻击目标（避免编译期依赖 goety）。 */
+    /** 通过反射绑定 Goety 仆从的主人 / 1 分钟寿命 / 攻击目标（Method 对象缓存）。 */
     private static void bindGoetyOwner(Mob minion, LivingEntity boss, Entity attacker) {
+        resolveReflectionMethods();
         if (attacker instanceof LivingEntity owner) {
-            try {
-                minion.getClass().getMethod("setTrueOwner", LivingEntity.class).invoke(minion, owner);
-            } catch (Throwable ignored) {
+            if (setTrueOwnerMethod != null) {
+                try {
+                    setTrueOwnerMethod.invoke(minion, owner);
+                } catch (Throwable t) {
+                    warnReflection("setTrueOwner", t);
+                }
             }
-            try {
-                minion.getClass().getMethod("setOwnerId", UUID.class).invoke(minion, owner.getUUID());
-            } catch (Throwable ignored) {
+            if (setOwnerIdMethod != null) {
+                try {
+                    setOwnerIdMethod.invoke(minion, owner.getUUID());
+                } catch (Throwable t) {
+                    warnReflection("setOwnerId", t);
+                }
             }
         }
         // Goety 寿命机制：1 分钟
-        try {
-            minion.getClass().getMethod("setHasLifespan", boolean.class).invoke(minion, true);
-        } catch (Throwable ignored) {
+        if (setHasLifespanMethod != null) {
+            try {
+                setHasLifespanMethod.invoke(minion, true);
+            } catch (Throwable t) {
+                warnReflection("setHasLifespan", t);
+            }
         }
-        try {
-            minion.getClass().getMethod("setLifespan", int.class).invoke(minion, (int) LIFETIME_TICKS);
-        } catch (Throwable ignored) {
+        if (setLifespanMethod != null) {
+            try {
+                setLifespanMethod.invoke(minion, (int) LIFETIME_TICKS);
+            } catch (Throwable t) {
+                warnReflection("setLifespan", t);
+            }
         }
-        try {
-            minion.getClass().getMethod("overrideSetTarget", LivingEntity.class).invoke(minion, boss);
-        } catch (Throwable ignored) {
+        if (overrideSetTargetMethod != null) {
+            try {
+                overrideSetTargetMethod.invoke(minion, boss);
+            } catch (Throwable t) {
+                warnReflection("overrideSetTarget", t);
+            }
+        }
+    }
+
+    private static void resolveReflectionMethods() {
+        if (reflectionResolved) return;
+        synchronized (PigMinionLogic.class) {
+            if (reflectionResolved) return;
+            try {
+                Class<?> base = Class.forName("com.Polarice3.Goety.common.entities.neutral.ZPiglinServant");
+                setTrueOwnerMethod = base.getMethod("setTrueOwner", LivingEntity.class);
+                setOwnerIdMethod = base.getMethod("setOwnerId", UUID.class);
+                setHasLifespanMethod = base.getMethod("setHasLifespan", boolean.class);
+                setLifespanMethod = base.getMethod("setLifespan", int.class);
+                overrideSetTargetMethod = base.getMethod("overrideSetTarget", LivingEntity.class);
+            } catch (Throwable t) {
+                warnReflection("resolve", t);
+            }
+            reflectionResolved = true;
+        }
+    }
+
+    private static void warnReflection(String method, Throwable t) {
+        if (!warnedOnce) {
+            warnedOnce = true;
+            com.endsustain.EndSustain.LOGGER.warn("[猪咪仆从] Goety 反射调用 {} 失败：{}", method, t.toString());
         }
     }
 
@@ -152,7 +210,9 @@ public final class PigMinionLogic {
         }
         LivingEntity target = attackerMinion instanceof Mob am ? am.getTarget() : null;
         bindGoetyOwner(minion, target != null ? target : minion, ownerEntity);
-        level.addFreshEntity(minion);
+        boolean added = level.addFreshEntity(minion);
+        if (!added) return;
+        registerMinion(level, minion);
 
         // 每个原始仆从最多转化 1 个
         attackerMinion.getPersistentData().putInt(CONVERTS_KEY, 0);
@@ -167,6 +227,7 @@ public final class PigMinionLogic {
         if (!data.getBoolean(MINION_KEY)) return;
         long expire = data.getLong(EXPIRE_KEY);
         if (expire != 0L && minion.level().getGameTime() >= expire) {
+            unregisterMinion(minion);
             minion.remove(Entity.RemovalReason.DISCARDED);
             return;
         }
@@ -220,14 +281,38 @@ public final class PigMinionLogic {
     }
 
     private static int countMinions(ServerLevel level) {
-        int count = 0;
-        for (Entity entity : level.getAllEntities()) {
-            if (entity instanceof LivingEntity living
-                    && living.isAlive()
-                    && living.getPersistentData().getBoolean(MINION_KEY)) {
-                count++;
+        Set<Integer> ids = MINION_REGISTRY.get(level);
+        if (ids == null || ids.isEmpty()) return 0;
+        // 清理已不存在的实体 ID（防御性）
+        ids.removeIf(id -> !(level.getEntity(id) instanceof LivingEntity living)
+                || !living.isAlive()
+                || !living.getPersistentData().getBoolean(MINION_KEY));
+        if (ids.isEmpty()) {
+            MINION_REGISTRY.remove(level);
+        }
+        return ids.size();
+    }
+
+    private static void registerMinion(ServerLevel level, LivingEntity minion) {
+        MINION_REGISTRY.computeIfAbsent(level, k ->
+                java.util.concurrent.ConcurrentHashMap.newKeySet()).add(minion.getId());
+    }
+
+    static void unregisterMinion(LivingEntity minion) {
+        if (minion.level() instanceof ServerLevel level) {
+            Set<Integer> ids = MINION_REGISTRY.get(level);
+            if (ids != null) {
+                ids.remove(minion.getId());
+                if (ids.isEmpty()) {
+                    MINION_REGISTRY.remove(level);
+                }
             }
         }
-        return count;
+    }
+
+    /** 服务器停止时清理登记表，防止跨存档残留。 */
+    public static void clear() {
+        MINION_REGISTRY.clear();
+        warnedOnce = false;
     }
 }

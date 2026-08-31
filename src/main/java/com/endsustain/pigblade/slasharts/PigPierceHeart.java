@@ -38,7 +38,7 @@ public final class PigPierceHeart {
         Vec3 baseDir = target != null
                 ? target.getBoundingBox().getCenter().subtract(player.getEyePosition()).normalize()
                 : player.getLookAngle();
-        com.endsustain.EndSustain.LOGGER.info("[万猪穿心] 释放：伤害={}，目标={}，10 发齐射", damage, target);
+        com.endsustain.EndSustain.LOGGER.debug("[万猪穿心] 释放：伤害={}，目标={}，10 发齐射", damage, target);
 
         // 10 发幻影剑扇形齐射，朝目标方向
         for (int i = 0; i < SWORD_COUNT; i++) {

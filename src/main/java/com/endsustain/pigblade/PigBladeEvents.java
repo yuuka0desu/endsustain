@@ -38,7 +38,7 @@ public final class PigBladeEvents {
             Vec3 dir = player.getLookAngle();
             PigBladeLogic.launch(player, dir, Math.max(1.0D, event.getDamage() * 0.8D));
         } else {
-            com.endsustain.EndSustain.LOGGER.info("[猪咪挥刀] SE 未生效：hasSE={}，等级={}",
+            com.endsustain.EndSustain.LOGGER.debug("[猪咪挥刀] SE 未生效：hasSE={}，等级={}",
                     state.hasSpecialEffect(PigBladeRegistry.YOU_ARE_PIG.getId()),
                     player.experienceLevel);
         }
@@ -52,11 +52,20 @@ public final class PigBladeEvents {
         }
     }
 
-    /** 猪化生物抗性 -50%：受到的伤害提高 50%。 */
+    /**
+     * 伤害事件统一入口：
+     * - 猪化生物抗性 -50%（受伤 +50%）；
+     * - 原始猪咪仆从攻击命中时尝试转化目标。
+     */
     @SubscribeEvent
     public static void onLivingHurt(net.minecraftforge.event.entity.living.LivingHurtEvent event) {
         if (event.getEntity() instanceof PigFormPig) {
             event.setAmount(event.getAmount() * 1.5F);
+        }
+        if (event.getSource().getEntity() instanceof LivingEntity attacker
+                && PigMinionLogic.isOriginalMinion(attacker)
+                && attacker.getPersistentData().getInt(PigMinionLogic.CONVERTS_KEY) > 0) {
+            PigMinionLogic.tryConvert(attacker, event.getEntity());
         }
     }
 
@@ -64,16 +73,8 @@ public final class PigBladeEvents {
     public static void onLivingDeath(LivingDeathEvent event) {
         if (event.getEntity() instanceof PigFormPig pig) {
             PigFormLogic.revert(pig, false);
-        }
-    }
-
-    /** 原始猪咪仆从攻击命中时尝试转化目标。 */
-    @SubscribeEvent
-    public static void onMinionHurt(LivingHurtEvent event) {
-        if (event.getSource().getEntity() instanceof LivingEntity attacker
-                && PigMinionLogic.isOriginalMinion(attacker)
-                && attacker.getPersistentData().getInt(PigMinionLogic.CONVERTS_KEY) > 0) {
-            PigMinionLogic.tryConvert(attacker, event.getEntity());
+        } else if (PigMinionLogic.isMinion(event.getEntity())) {
+            PigMinionLogic.unregisterMinion(event.getEntity());
         }
     }
 

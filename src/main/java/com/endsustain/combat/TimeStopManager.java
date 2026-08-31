@@ -31,6 +31,11 @@ public final class TimeStopManager {
         ACTIVE.remove(level.dimension());
     }
 
+    /** 服务器停止时清理，防止跨存档残留。 */
+    public static void clear() {
+        ACTIVE.clear();
+    }
+
     public static boolean isFrozenPosition(Level level, BlockPos position) {
         Stop stop = ACTIVE.get(level.dimension());
         if (stop == null) return false;

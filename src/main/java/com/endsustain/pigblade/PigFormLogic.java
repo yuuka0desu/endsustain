@@ -36,11 +36,11 @@ public final class PigFormLogic {
     /** 将目标替换为猪形态替身，成功返回猪实体，失败返回 null。 */
     public static PigFormPig transform(LivingEntity target, LivingEntity attacker, float originalDamage) {
         if (target.level().isClientSide()) {
-            com.endsustain.EndSustain.LOGGER.warn("[猪化] 客户端调用被忽略：{}", target.getName().getString());
+            com.endsustain.EndSustain.LOGGER.debug("[猪化] 客户端调用被忽略：{}", target.getName().getString());
             return null;
         }
         if (!isValidTarget(target)) {
-            com.endsustain.EndSustain.LOGGER.warn("[猪化] 目标不合法：{}，类别={}",
+            com.endsustain.EndSustain.LOGGER.debug("[猪化] 目标不合法：{}，类别={}",
                     target.getName().getString(), target.getType().getCategory());
             return null;
         }
@@ -71,7 +71,7 @@ public final class PigFormLogic {
 
             level.addFreshEntity(pig);
             target.remove(Entity.RemovalReason.DISCARDED);
-            com.endsustain.EndSustain.LOGGER.info("[猪化] 成功：{} → 猪咪，血量={}/{}",
+            com.endsustain.EndSustain.LOGGER.debug("[猪化] 成功：{} → 猪咪，血量={}/{}",
                     target.getName().getString(), health, maxHealth);
             return pig;
         } catch (Throwable exception) {

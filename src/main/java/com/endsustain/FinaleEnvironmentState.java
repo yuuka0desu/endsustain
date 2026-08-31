@@ -72,5 +72,14 @@ public final class FinaleEnvironmentState {
     @SubscribeEvent
     public static void onServerStopped(ServerStoppedEvent event) {
         active = false;
+        // 统一清理各模块运行态缓存，防止跨存档残留实体引用
+        com.endsustain.pigblade.PigSwordTracker.clear();
+        com.endsustain.pigblade.PigMinionLogic.clear();
+        com.endsustain.combat.TrueKillUtil.clearAll();
+        com.endsustain.combat.TimeStopManager.clear();
+        com.endsustain.entity.boss.DimensionPhaseManager.clear();
+        com.endsustain.entity.boss.EndsustainBladeEntity.clearPresence();
+        com.endsustain.event.ForgeBusEvents.cleanupFinalePresence();
+        com.endsustain.progress.FinaleActiveSkills.clearState();
     }
 }
