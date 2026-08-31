@@ -5,6 +5,11 @@ import com.endsustain.config.EndSustainConfig;
 import com.endsustain.entity.companion.SmallZhanjiangCompanionEntity;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.protocol.game.ClientboundPlayerCombatKillPacket;
+import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.item.enchantment.EnchantmentHelper;
+import net.minecraft.world.level.GameRules;
 import net.minecraft.world.level.gameevent.GameEvent;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
@@ -63,21 +68,58 @@ public final class TrueKillUtil {
         }
 
         if (target instanceof ServerPlayer player) {
-            target.die(source);
-            PENDING_DEATHS.remove(target.getUUID());
-            if (!deathTransactionStarted(target)) {
-                forceServerPlayerDeathTransaction(player, source);
-            }
-            if (deathTransactionStarted(target)) {
-                EndSustain.LOGGER.info("终焉伤害已单次完成玩家死亡事务：{}，维度={}",
-                        target.getType(), target.level().dimension().location());
-            } else {
-                EndSustain.LOGGER.error("玩家死亡事务建立失败：{}，维度={}",
-                        target.getType(), target.level().dimension().location());
+            // 打上终焉标记：mixin 层强制死亡入口与死亡掉落不可取消，
+            // 保证未开 keepInventory 时物品按原版逻辑直接掉落地面。
+            EndsustainTerminal.mark(target);
+            try {
+                target.die(source);
+                PENDING_DEATHS.remove(target.getUUID());
+                if (!deathTransactionStarted(target)) {
+                    // 死亡被外部复活效果截断：兜底补一次地面掉落，再强制建立死亡事务。
+                    dropInventoryOnGround(player);
+                    forceServerPlayerDeathTransaction(player, source);
+                }
+                if (deathTransactionStarted(target)) {
+                    EndSustain.LOGGER.info("终焉伤害已单次完成玩家死亡事务：{}，维度={}",
+                            target.getType(), target.level().dimension().location());
+                } else {
+                    EndSustain.LOGGER.error("玩家死亡事务建立失败：{}，维度={}",
+                            target.getType(), target.level().dimension().location());
+                }
+            } finally {
+                EndsustainTerminal.unmark(target);
             }
         }
         } finally {
             IN_PROGRESS.remove(targetId);
+        }
+    }
+
+    /**
+     * 尾杀兜底掉落：玩家死亡事务被外部复活效果截断时，
+     * 未开死亡不掉落（keepInventory）则把背包物品以物品实体直接掉落地面。
+     * 消失诅咒物品与原版一致跳过；keepInventory 开启时物品保留在背包。
+     */
+    private static void dropInventoryOnGround(ServerPlayer player) {
+        if (player.level().getGameRules().getBoolean(GameRules.RULE_KEEPINVENTORY)) return;
+        Inventory inventory = player.getInventory();
+        double x = player.getX();
+        double y = player.getY();
+        double z = player.getZ();
+        boolean dropped = false;
+        for (int i = 0; i < inventory.getContainerSize(); i++) {
+            ItemStack stack = inventory.getItem(i);
+            if (!stack.isEmpty() && !EnchantmentHelper.hasVanishingCurse(stack)) {
+                ItemEntity item = new ItemEntity(player.level(), x, y, z, stack.copy());
+                item.setDefaultPickUpDelay();
+                player.level().addFreshEntity(item);
+                inventory.setItem(i, ItemStack.EMPTY);
+                dropped = true;
+            }
+        }
+        if (dropped) {
+            EndSustain.LOGGER.info("尾杀兜底掉落：玩家 {} 的物品已直接掉落地面",
+                    player.getGameProfile().getName());
         }
     }
 

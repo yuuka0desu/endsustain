@@ -13,8 +13,8 @@ import net.minecraftforge.registries.ForgeRegistries;
 import java.util.List;
 
 public class FinalePathScreen extends Screen {
-    private static final String[] TITLES = {"序章：愚者启程","第一幕：繁花之下皆是旧坟","第二幕：深渊仍记得上一场梦","第三幕：旧世界仍在燃烧","第四幕：世界的枷锁","第五幕：黑暗秘典","第六幕：末地不是终点","第七幕：窥探终末之语","终章：落幕仪式","最后一战","尾声：世界已经结束，而故事仍被记得"};
-    private static final String[] CONDITIONS = {"佩戴小蘸酱","击败虚空之花","击败暗夜巫妖","击败先驱者","抵达下界","击败亚波伦","击败末影龙","击败末影守望者","完成落幕仪式","直面末影蘸酱","击败末影蘸酱"};
+    private static final String[] TITLES = {"序章：愚者启程","第一幕：繁花之下皆是旧坟","第二幕：深渊仍记得上一场梦","第三幕：旧世界仍在燃烧","第四幕：世界的枷锁","第五幕：天空的枷锁","第六幕：末地不是终点","第七幕：窥探终末之语","终章：落幕仪式","最后一战","尾声：世界已经结束，而故事仍被记得"};
+    private static final String[] CONDITIONS = {"佩戴小蘸酱","击败虚空之花","击败暗夜巫妖","抵达下界","击败先驱者","击败末影龙","击败末影守卫","获得晋升之环","完成落幕仪式","直面末影蘸酱","击败末影蘸酱"};
     private static final String[] SKILLS = {"虚空花冠","巫妖魂火","先驱之力","深渊回响","旧世余烬","天启之环"};
     private static final String[] STATS = {"生命 +10%  攻击 +5%","生命 +15%  攻击 +10%  移速 +5%","生命 +20%  攻击 +15%  护甲 +4","生命 +25%  攻击 +20%  减伤 5%","生命 +30%  攻击 +25%  韧性 +4  减伤 8%","生命 +40%  攻击 +35%  移速 +10%  减伤 15%"};
     private static final String[] SKILL_DESCRIPTIONS = {

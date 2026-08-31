@@ -1,7 +1,6 @@
 package com.endsustain.client;
 
 import com.endsustain.EndSustain;
-import com.endsustain.entity.boss.FinaleEndsustainEntity;
 import net.minecraft.client.Minecraft;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraftforge.api.distmarker.Dist;
@@ -13,8 +12,11 @@ import net.minecraftforge.fml.common.Mod;
 public final class FinalePresenceEffects {
     private static final ResourceLocation FILTER =
             new ResourceLocation(EndSustain.MOD_ID, "shaders/post/finale_presence.json");
+    /** 滤镜兜底超时：服务器 end 包丢失或玩家中途脱离时自动关闭。 */
+    private static final int FILTER_TIMEOUT_TICKS = 240;
     private static boolean active;
     private static volatile boolean globalEnvironmentActive;
+    private static int filterTicksLeft;
 
     private FinalePresenceEffects() {}
 
@@ -32,6 +34,26 @@ public final class FinalePresenceEffects {
         return globalEnvironmentActive;
     }
 
+    /** 终结技释放前约 5 秒：由服务器在魅惑提示（beginCharm）时经网络包触发。 */
+    public static void startUltimateFilter() {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (!active && minecraft.gameRenderer != null) {
+            minecraft.gameRenderer.loadEffect(FILTER);
+            active = true;
+        }
+        filterTicksLeft = FILTER_TIMEOUT_TICKS;
+    }
+
+    /** 终结技命中后：由服务器在 applyTrueDamage 时广播结束。 */
+    public static void stopUltimateFilter() {
+        Minecraft minecraft = Minecraft.getInstance();
+        if (active && minecraft.gameRenderer != null) {
+            minecraft.gameRenderer.shutdownEffect();
+            active = false;
+        }
+        filterTicksLeft = 0;
+    }
+
     @SubscribeEvent
     public static void onClientTick(TickEvent.ClientTickEvent event) {
         if (event.phase != TickEvent.Phase.END) return;
@@ -41,16 +63,11 @@ public final class FinalePresenceEffects {
             minecraft.level.setRainLevel(1.0F);
             minecraft.level.setThunderLevel(1.0F);
         }
-        boolean present = minecraft.level != null && minecraft.player != null
-                && !minecraft.level.getEntitiesOfClass(FinaleEndsustainEntity.class,
-                minecraft.player.getBoundingBox().inflate(256.0D), FinaleEndsustainEntity::isEnvironmentActive).isEmpty();
-
-        if (present && !active) {
-            minecraft.gameRenderer.loadEffect(FILTER);
-            active = true;
-        } else if (!present && active) {
-            minecraft.gameRenderer.shutdownEffect();
-            active = false;
+        // 滤镜兜底：客户端脱离世界或超时未收到结束包时自动关闭，避免黑白滤镜残留。
+        if (active) {
+            if (minecraft.level == null || minecraft.player == null || --filterTicksLeft <= 0) {
+                stopUltimateFilter();
+            }
         }
     }
 }

@@ -15,11 +15,12 @@ public final class FinalePathKeyHandler {
     public static final KeyMapping OPEN = key("key.endsustain.finale_path", GLFW.GLFW_KEY_Z);
     public static final KeyMapping TIDAL_TENTACLE_TOGGLE = key("key.endsustain.skill.tidal_toggle", GLFW.GLFW_KEY_G);
     public static final KeyMapping[] SKILLS = {
+            // 新版顺序与 UI/服务器一致：[虚空花冠, 巫妖魂火, 先驱之力, 深渊回响, 旧世余烬, 天启之环]
+            key("key.endsustain.skill.void_crown", GLFW.GLFW_KEY_N),
+            key("key.endsustain.skill.soulfire", GLFW.GLFW_KEY_B),
             key("key.endsustain.skill.harbinger", GLFW.GLFW_KEY_X),
             key("key.endsustain.skill.abyss", GLFW.GLFW_KEY_C),
             key("key.endsustain.skill.ember", GLFW.GLFW_KEY_V),
-            key("key.endsustain.skill.soulfire", GLFW.GLFW_KEY_B),
-            key("key.endsustain.skill.void_crown", GLFW.GLFW_KEY_N),
             key("key.endsustain.skill.apocalypse", GLFW.GLFW_KEY_M)
     };
 

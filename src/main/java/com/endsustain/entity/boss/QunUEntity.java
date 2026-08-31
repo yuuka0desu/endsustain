@@ -30,6 +30,7 @@ public class QunUEntity extends Pig {
         setCustomName(Component.literal("群u"));
         setCustomNameVisible(true);
         getPersistentData().putBoolean("EndsustainQunU", true);
+        addTag("endsustain_qunu");
     }
 
     public static AttributeSupplier.Builder createAttributes() {

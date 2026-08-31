@@ -6,6 +6,8 @@ import com.endsustain.entity.ModEntities;
 import com.endsustain.entity.boss.FinaleEndsustainEntity;
 import com.endsustain.entity.boss.QunUEntity;
 import com.endsustain.entity.companion.SmallZhanjiangCompanionEntity;
+import com.endsustain.pigblade.PigFormPig;
+import com.endsustain.pigblade.registry.PigBladeRegistry;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.eventbus.api.IEventBus;
 import net.minecraftforge.fml.common.Mod;
@@ -25,6 +27,7 @@ public class ModBusEvents {
         event.put(ModEntities.FINALE.get(), FinaleEndsustainEntity.createAttributes().build());
         event.put(ModEntities.QUN_U.get(), QunUEntity.createAttributes().build());
         event.put(ModEntities.SMALL_ZHANJIANG_COMPANION.get(), SmallZhanjiangCompanionEntity.createAttributes().build());
+        event.put(PigBladeRegistry.PIG_FORM.get(), PigFormPig.createAttributes().build());
     }
 
     @SubscribeEvent

@@ -15,7 +15,8 @@
   ],
   "client": [
     "LightTextureMixin",
-    "AbnormalStateMixin"
+    "AbnormalStateMixin",
+    "AbnormalStateReinforceMixin"
   ],
   "injectors": {
     "defaultRequire": 1

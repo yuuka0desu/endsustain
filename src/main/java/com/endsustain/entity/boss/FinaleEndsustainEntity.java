@@ -26,6 +26,7 @@ import net.minecraft.world.entity.ai.goal.target.HurtByTargetGoal;
 import net.minecraft.world.entity.ai.goal.target.NearestAttackableTargetGoal;
 import net.minecraft.world.entity.monster.Monster;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.core.particles.ParticleTypes;
@@ -52,7 +53,7 @@ import java.util.UUID;
  *   <li><b>近战/特殊</b>：终焉之刃投掷（制导追踪+忠诚回收）；
  *       必杀技举刃→锁定冲刺→收刀→1tick 后 2147483647 真实伤害</li>
  * </ol>
- * 受伤 30% 概率瞬移到 32 格内地面。
+ * 受伤必触发瞬移到 32 格内地面（冷却 10 秒）。
  */
 public class FinaleEndsustainEntity extends Monster implements GeoEntity {
     private UUID encounterId = UUID.randomUUID();
@@ -71,6 +72,13 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
                 state.getController().forceAnimationReset();
             }
             if (sleeping) {
+                // 闭眼睡觉：任何残留动作（施法/受击等）都强制中断并切回 sleep 循环动画
+                var current = state.getController().getCurrentAnimation();
+                boolean isSleepAnim = current != null && current.animation() != null
+                        && "sleep".equals(current.animation().name());
+                if (!isSleepAnim) {
+                    state.getController().forceAnimationReset();
+                }
                 return state.setAndContinue(RawAnimation.begin().thenLoop("sleep"));
             }
             if (getAttackState() == STATE_CASTING || getAttackState() == STATE_CHARM) {
@@ -230,22 +238,27 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
     void tickSocialPhase() { if (observedHealth <= 0.0F) observedHealth = getHealth(); FinaleEndsustainSocial.tick(this); }
     void tickSleepingSummons() {
         if (this.level() instanceof ServerLevel server) {
+            // 仅清理自己召唤的群u：校验从属标签，其他蘸酱 Boss 召唤的群u不参与本 Boss 的检测
             qunUIds.removeIf(id -> {
                 Entity entity = server.getEntity(id);
-                return !(entity instanceof QunUEntity qun) || !qun.isAlive() || qun.level() != this.level();
+                return !(entity instanceof QunUEntity qun)
+                        || !qun.isAlive()
+                        || qun.level() != this.level()
+                        || qun.getOwnerBoss() == null
+                        || !qun.getOwnerBoss().equals(this.getUUID());
             });
         }
         if (this.level() instanceof ServerLevel server && this.tickCount % 10 == 0) {
             double angle = this.tickCount * 0.18D;
             server.sendParticles(ParticleTypes.END_ROD, this.getX() + Math.cos(angle) * 0.45D,
                     this.getEyeY() + 0.25D, this.getZ() + Math.sin(angle) * 0.45D,
-                    2, 0.08D, 0.06D, 0.08D, 0.01D);
+                    1, 0.08D, 0.06D, 0.08D, 0.01D);
             server.sendParticles(ParticleTypes.REVERSE_PORTAL, this.getX(), this.getEyeY() + 0.55D,
-                    this.getZ(), 3, 0.28D, 0.12D, 0.28D, 0.01D);
-            if (this.tickCount % 20 == 0) {
-                double zHeight = 0.65D + (this.tickCount / 20 % 3) * 0.28D;
+                    this.getZ(), 1, 0.28D, 0.12D, 0.28D, 0.01D);
+            if (this.tickCount % 40 == 0) {
+                double zHeight = 0.65D + (this.tickCount / 40 % 3) * 0.28D;
                 server.sendParticles(ParticleTypes.CLOUD, this.getX() + 0.35D,
-                        this.getEyeY() + zHeight, this.getZ(), 2, 0.04D, 0.03D, 0.04D, 0.005D);
+                        this.getEyeY() + zHeight, this.getZ(), 1, 0.04D, 0.03D, 0.04D, 0.005D);
             }
         }
         if (isSleeping() && ++sleepSummonTicks >= 200) {
@@ -279,8 +292,18 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
         sleepInvulnerable = true;
         neutralIdleTicks = neutralHurtTicks = 0;
         sleepSummonTicks = 0;
+        // 睡觉时强制中断所有动作：清空施法/魅惑状态并停止移动，确保进入闭眼睡觉动画。
+        setAttackState(STATE_IDLE);
+        setAttackTick(0);
+        this.currentCastingSpell = null;
+        this.magicMissileBarrageTarget = null;
+        this.charmedTarget = null;
+        this.getNavigation().stop();
+        this.setDeltaMovement(Vec3.ZERO);
     }
     public void onQunUKilled(UUID id) {
+        // 仅响应自己召唤的群u：多 Boss 场景下其他 Boss 的群u死亡不触发本 Boss 反应
+        if (!ownsQunU(id)) return;
         qunUIds.remove(id);
         if (isSleeping()) sleepInvulnerable = false;
     }
@@ -323,6 +346,10 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
     public void aiStep() {
         super.aiStep();
         this.bossEvent.setProgress(this.getHealth() / this.getMaxHealth());
+        // 虚空回拉：所处高度低于 -64 时强制传送回最近的地面
+        if (!this.level().isClientSide && this.getY() < VOID_Y_THRESHOLD) {
+            enforceMinimumHeight();
+        }
         if (!this.level().isClientSide) ForgeBusEvents.observeFinaleBoss(this);
         if (!this.level().isClientSide && combatDeathTailStarted) {
             this.getNavigation().stop();
@@ -354,7 +381,7 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
             tickPassiveCrystalAnchorAttack();
             tickStarArrowTrueKill();
             int state = getAttackState();
-            if (state != STATE_IDLE && this.tickCount % 4 == 0) {
+            if (state != STATE_IDLE && this.tickCount % 8 == 0) {
                 spawnCastingAuraParticles(state);
             }
             // 施法中持续面朝目标追踪
@@ -424,7 +451,7 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
         double range = this.getAttributeValue(Attributes.FOLLOW_RANGE);
         for (Player player : this.level().getEntitiesOfClass(Player.class,
                 this.getBoundingBox().inflate(range),
-                p -> p.isAlive() && !p.isSpectator())) {
+                p -> p.isAlive() && isAttackableGameMode(p))) {
             if (player.getAbilities().flying) {
                 player.getAbilities().flying = false;
                 if (player instanceof ServerPlayer serverPlayer) {
@@ -481,15 +508,17 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
         if (!playerDamage) {
             return false;
         }
-        if (!this.level().isClientSide && this.isAlive()
-                && this.teleportCooldown <= 0
-                && this.random.nextFloat() < 0.30F) {
+        int state = getAttackState();
+        if (!this.level().isClientSide && this.isAlive() && this.teleportCooldown <= 0
+                && state != STATE_CHARM
+                && !(state >= STATE_ULT_RAISE && state <= STATE_ULT_SHEATHE)) {
             Player nearestPlayer = findNearestPlayerInFollowRange();
             if (nearestPlayer != null) {
                 teleportRandomAroundPlayer(nearestPlayer);
             } else {
                 teleportRandomNearby();
             }
+            this.teleportCooldown = 200; // 受击瞬移：100% 触发，冷却 10 秒
         }
         float cappedAmount = Math.min(amount, this.getMaxHealth() * 0.02F);
         float resistedAmount = cappedAmount * 0.20F; // 全抗提升 80%
@@ -501,7 +530,23 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
                 && entity.isAlive()
                 && entity.level() == this.level()
                 && !(entity instanceof com.endsustain.entity.companion.SmallZhanjiangCompanionEntity)
-                && (!(entity instanceof Player player) || !player.isSpectator());
+                && (!(entity instanceof Player player) || isAttackableGameMode(player));
+    }
+
+    /** 只索敌生存与冒险模式玩家：创造、旁观一律不锁定。 */
+    private static boolean isAttackableGameMode(Player player) {
+        if (player.isSpectator()) return false;
+        if (player instanceof ServerPlayer serverPlayer) {
+            GameType type = serverPlayer.gameMode.getGameModeForPlayer();
+            return type == GameType.SURVIVAL || type == GameType.ADVENTURE;
+        }
+        return true;
+    }
+
+    /** 统一过滤：任何路径设置的锁敌目标都必须通过 isValidBossTarget。 */
+    @Override
+    public void setTarget(@Nullable LivingEntity target) {
+        super.setTarget(target != null && !isValidBossTarget(target) ? null : target);
     }
 
     private boolean isWithinFollowRange(LivingEntity target) {
@@ -549,7 +594,7 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
         double nearestDist = Double.MAX_VALUE;
         for (Player player : this.level().getEntitiesOfClass(Player.class,
                 this.getBoundingBox().inflate(followRange),
-                p -> p.isAlive() && !p.isSpectator())) {
+                p -> p.isAlive() && isAttackableGameMode(p))) {
             double dist = this.distanceToSqr(player);
             if (dist <= rangeSqr && dist < nearestDist) {
                 nearestDist = dist;
@@ -711,6 +756,10 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
         teleportFacingTarget(target);
         spawnCastBurst(target, 3);
         target.sendSystemMessage(net.minecraft.network.chat.Component.literal("§5落幕之终焉正在魅惑你，3秒后将释放终结技！"));
+        // 终结技前 5 秒：只给魅惑目标开启黑白滤镜，命中后由服务器广播关闭。
+        if (target instanceof ServerPlayer serverPlayer) {
+            com.endsustain.network.EndSustainNetwork.sendUltimateFilterStart(serverPlayer);
+        }
     }
 
     private void tickCharm(int tick) {
@@ -724,6 +773,7 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
             setAttackTick(0);
             this.charmedTarget = null;
             this.setInvulnerable(false);
+            broadcastUltimateFilterEnd();
             return;
         }
         teleportFacingTarget(target);
@@ -754,6 +804,68 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
         }
     }
 
+    // ======================== 虚空回拉 ========================
+
+    /** 低于该高度视为坠入虚空，强制回拉。 */
+    private static final double VOID_Y_THRESHOLD = -64.0D;
+
+    private void enforceMinimumHeight() {
+        Level level = this.level();
+        int startX = this.blockPosition().getX();
+        int startZ = this.blockPosition().getZ();
+        // 以当前列为中心，半径 0/4/8/12/16 螺旋搜索最近的地面
+        for (int ring = 0; ring <= 16; ring += 4) {
+            if (ring == 0) {
+                if (trySnapFromVoid(startX, startZ)) return;
+            } else {
+                for (int off = -ring; off <= ring; off += 4) {
+                    if (trySnapFromVoid(startX + off, startZ - ring)) return;
+                    if (trySnapFromVoid(startX + off, startZ + ring)) return;
+                    if (trySnapFromVoid(startX - ring, startZ + off)) return;
+                    if (trySnapFromVoid(startX + ring, startZ + off)) return;
+                }
+            }
+        }
+        // 兜底：附近找不到地面时，传送到最近可索敌玩家上方 2 格
+        Player nearest = findNearestPlayerInFollowRange();
+        if (nearest == null && level instanceof ServerLevel server) {
+            nearest = server.getEntitiesOfClass(Player.class, this.getBoundingBox().inflate(128.0D),
+                            p -> p.isAlive() && isAttackableGameMode(p))
+                    .stream().min(java.util.Comparator.comparingDouble(this::distanceToSqr)).orElse(null);
+        }
+        if (nearest != null) {
+            landFromVoid(nearest.getX(), nearest.getY() + 2.0D, nearest.getZ());
+            return;
+        }
+        // 最终兜底：世界出生点上方地面
+        BlockPos spawn = level.getSharedSpawnPos();
+        BlockPos hm = level.getHeightmapPos(
+                net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING, spawn);
+        landFromVoid(hm.getX() + 0.5D, hm.getY() + 1.0D, hm.getZ() + 0.5D);
+    }
+
+    /** 尝试把 Boss 传送到 (x,z) 列的最高实心方块顶面（须有 2 格空气），成功返回 true。 */
+    private boolean trySnapFromVoid(int x, int z) {
+        Level level = this.level();
+        BlockPos hm = level.getHeightmapPos(
+                net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING, new BlockPos(x, 0, z));
+        int topY = hm.getY();
+        if (topY <= level.getMinBuildHeight() || topY >= level.getMaxBuildHeight() - 2) return false;
+        BlockPos feet = hm.above();
+        if (!level.isEmptyBlock(feet) || !level.isEmptyBlock(feet.above())) return false;
+        landFromVoid(x + 0.5D, feet.getY() + 0.01D, z + 0.5D);
+        return true;
+    }
+
+    /** 虚空回拉落地：清速度、清摔落伤害并标记位置同步。 */
+    private void landFromVoid(double x, double y, double z) {
+        this.getNavigation().stop();
+        this.setDeltaMovement(Vec3.ZERO);
+        this.teleportTo(x, y, z);
+        this.fallDistance = 0.0F;
+        this.hurtMarked = true;
+    }
+
     private void teleportFacingTarget(Player target) {
         double dx = target.getX() - this.getX();
         double dz = target.getZ() - this.getZ();
@@ -778,9 +890,11 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
         TrueKillUtil.cancelPending(this);
         getPersistentData().remove(TrueKillUtil.TERMINAL_STATE_KEY);
         getPersistentData().putBoolean("EndsustainCombatDeathFinalizing", true);
+        broadcastUltimateFilterEnd();
         if (this.level() instanceof ServerLevel server) {
-            server.getEntities(this, this.getBoundingBox().inflate(96.0D),
-                    entity -> entity.getTags().contains("endsustain_tail_kill_star_arrow"))
+            // 快照遍历：discard 会修改 ServerLevel 底层实体集合，避免并发修改异常
+            new java.util.ArrayList<>(server.getEntities(this, this.getBoundingBox().inflate(96.0D),
+                    entity -> entity.getTags().contains("endsustain_tail_kill_star_arrow")))
                     .forEach(Entity::discard);
         }
         super.die(combatDeathSource != null ? combatDeathSource : this.damageSources().fellOutOfWorld());
@@ -800,16 +914,18 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
         EntityType<?> starArrowType = ForgeRegistries.ENTITY_TYPES.getValue(new ResourceLocation("revelationfix", "star_arrow"));
         if (starArrowType == null) return;
 
-        java.util.List<net.minecraft.world.entity.Entity> starArrows = server.getEntities(
-                this,
-                this.getBoundingBox().inflate(96.0D),
-                entity -> entity.isAlive()
-                        && entity.getType() == starArrowType
-                        && entity.getTags().contains("endsustain_tail_kill_star_arrow")
-        );
+        java.util.List<net.minecraft.world.entity.Entity> starArrows = new java.util.ArrayList<>(
+                server.getEntities(
+                        this,
+                        this.getBoundingBox().inflate(96.0D),
+                        entity -> entity.isAlive()
+                                && entity.getType() == starArrowType
+                                && entity.getTags().contains("endsustain_tail_kill_star_arrow")
+                ));
         if (starArrows.isEmpty()) return;
 
-        for (Player player : server.players()) {
+        // 快照遍历：forceKill 触发玩家死亡流程时，PlayerList 的共享玩家列表可能被同步修改
+        for (Player player : new java.util.ArrayList<>(server.players())) {
             if (!player.isAlive() || player.level() != this.level()) continue;
             double domainX = player.getX() - this.starStrikeDomainCenter.x;
             double domainZ = player.getZ() - this.starStrikeDomainCenter.z;
@@ -845,7 +961,6 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
         if (target == null) return;
         this.passiveCrystalAnchorCooldown = 40;
         spawnAndDetonateEndCrystal(server, target);
-        placeAndDetonateRespawnAnchor(server, target);
     }
 
     @Nullable
@@ -875,30 +990,8 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
                     px, y + 0.25D + Math.sin(ringAngle * 2.0D) * 0.15D, pz,
                     1, 0.0D, 0.02D, 0.0D, 0.0D);
         }
-        server.explode(this, x, y, z, 4.0F, Level.ExplosionInteraction.MOB);
-    }
-
-    private void placeAndDetonateRespawnAnchor(ServerLevel server, LivingEntity target) {
-        net.minecraft.core.BlockPos pos = net.minecraft.core.BlockPos.containing(
-                target.getX() + this.random.nextInt(5) - 2,
-                target.getY(),
-                target.getZ() + this.random.nextInt(5) - 2);
-        for (int i = 0; i < 4 && !server.isEmptyBlock(pos); i++) {
-            pos = pos.above();
-        }
-        if (server.isEmptyBlock(pos)) {
-            server.setBlock(pos, net.minecraft.world.level.block.Blocks.RESPAWN_ANCHOR.defaultBlockState()
-                    .setValue(net.minecraft.world.level.block.RespawnAnchorBlock.CHARGE, 4), 3);
-            server.sendParticles(net.minecraft.core.particles.ParticleTypes.PORTAL,
-                    pos.getX() + 0.5D, pos.getY() + 0.5D, pos.getZ() + 0.5D,
-                    32, 0.4D, 0.4D, 0.4D, 0.12D);
-            server.explode(this, pos.getX() + 0.5D, pos.getY() + 0.5D, pos.getZ() + 0.5D,
-                    5.0F, Level.ExplosionInteraction.MOB);
-            server.removeBlock(pos, false);
-        } else {
-            server.explode(this, target.getX(), target.getY() + 0.5D, target.getZ(),
-                    5.0F, Level.ExplosionInteraction.MOB);
-        }
+        // 生物破坏关闭：NONE 只造成实体伤害与击退，不破坏任何方块
+        server.explode(this, x, y, z, 4.0F, Level.ExplosionInteraction.NONE);
     }
 
     // ========================================================================
@@ -913,12 +1006,12 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
                 : style == 3 ? net.minecraft.core.particles.ParticleTypes.HEART
                 : net.minecraft.core.particles.ParticleTypes.WITCH;
         server.sendParticles(primary, this.getX(), y, this.getZ(),
-                style == 4 ? 90 : 36, 1.0D, 0.75D, 1.0D, 0.08D);
+                style == 4 ? 60 : 20, 1.0D, 0.75D, 1.0D, 0.08D);
         server.sendParticles(net.minecraft.core.particles.ParticleTypes.REVERSE_PORTAL,
-                this.getX(), y, this.getZ(), style == 4 ? 140 : 52,
+                this.getX(), y, this.getZ(), style == 4 ? 90 : 30,
                 style == 4 ? 2.8D : 1.25D, 0.9D, style == 4 ? 2.8D : 1.25D, 0.18D);
         server.sendParticles(net.minecraft.core.particles.ParticleTypes.END_ROD,
-                this.getX(), y + 0.35D, this.getZ(), style == 4 ? 70 : 24,
+                this.getX(), y + 0.35D, this.getZ(), style == 4 ? 45 : 14,
                 0.8D, 1.0D, 0.8D, 0.06D);
         if (target != null) {
             Vec3 from = this.getEyePosition();
@@ -926,7 +1019,7 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
             for (int i = 1; i <= 10; i++) {
                 Vec3 point = from.add(delta.scale(i / 11.0D));
                 server.sendParticles(net.minecraft.core.particles.ParticleTypes.ENCHANT,
-                        point.x, point.y, point.z, 2, 0.08D, 0.08D, 0.08D, 0.0D);
+                        point.x, point.y, point.z, 1, 0.08D, 0.08D, 0.08D, 0.0D);
             }
         }
     }
@@ -935,11 +1028,11 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
         if (!(this.level() instanceof ServerLevel server)) return;
         double angle = this.tickCount * 0.42D;
         double radius = state >= STATE_ULT_RAISE && state <= STATE_ULT_SHEATHE ? 2.2D : 1.15D;
-        for (int i = 0; i < 6; i++) {
-            double a = angle + Math.PI * 2.0D * i / 6.0D;
+        for (int i = 0; i < 3; i++) {
+            double a = angle + Math.PI * 2.0D * i / 3.0D;
             double x = this.getX() + Math.cos(a) * radius;
             double z = this.getZ() + Math.sin(a) * radius;
-            double y = this.getY() + 0.25D + (i % 3) * 0.55D;
+            double y = this.getY() + 0.55D + (i % 2) * 0.55D;
             server.sendParticles(i % 2 == 0 ? net.minecraft.core.particles.ParticleTypes.WITCH
                             : net.minecraft.core.particles.ParticleTypes.REVERSE_PORTAL,
                     x, y, z, 1, 0.03D, 0.05D, 0.03D, 0.01D);
@@ -1247,8 +1340,16 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
                     resetCharmTracking();
                     this.setInvulnerable(false);
                     this.bossEvent.setColor(BossEvent.BossBarColor.PURPLE);
+                    broadcastUltimateFilterEnd();
                 }
             }
+        }
+    }
+
+    /** 广播关闭黑白滤镜（终结技命中或流程中断时调用，幂等）。 */
+    private void broadcastUltimateFilterEnd() {
+        if (this.level() instanceof ServerLevel server) {
+            com.endsustain.network.EndSustainNetwork.broadcastUltimateFilterEnd(server);
         }
     }
 
@@ -1259,6 +1360,7 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
             this.ultTarget = null;
             this.setInvulnerable(false);
             this.bossEvent.setColor(BossEvent.BossBarColor.PURPLE);
+            broadcastUltimateFilterEnd();
             return;
         }
         lookAtLockedPos();
@@ -1272,6 +1374,7 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
         if (this.ultEntryPos == null || this.ultLockedPos == null || this.ultExitPos == null) {
             setAttackState(STATE_IDLE);
             setAttackTick(0);
+            broadcastUltimateFilterEnd();
             return;
         }
         lookAtLockedPos();
@@ -1284,6 +1387,8 @@ public class FinaleEndsustainEntity extends Monster implements GeoEntity {
         if (!this.ultDamagePending && progress >= 0.5F) {
             this.ultDamagePending = true;
             applyTrueDamage();
+            // 终结技命中：立即结束黑白滤镜
+            broadcastUltimateFilterEnd();
             if (this.level() instanceof ServerLevel server) {
                 com.endsustain.network.EndSustainNetwork.sendScreenTear(
                         server, this.ultLockedPos, 48.0D, 16);

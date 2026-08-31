@@ -1,0 +1,25 @@
+{
+  "name": "endsustain:pig_blade",
+  "enchantments": [
+    { "id": "minecraft:mending", "lvl": 1 },
+    { "id": "minecraft:unbreaking", "lvl": 10 },
+    { "id": "minecraft:sharpness", "lvl": 10 },
+    { "id": "minecraft:sweeping", "lvl": 10 },
+    { "id": "minecraft:looting", "lvl": 3 }
+  ],
+  "properties": {
+    "attack_base": 45.0,
+    "slash_art": "endsustain:pig_pierce_heart",
+    "special_effects": [
+      "endsustain:you_are_pig",
+      "endsustain:pig_force"
+    ],
+    "sword_type": [
+      "bewitched"
+    ]
+  },
+  "render": {
+    "model": "slashblade:model/named/sange/sange.obj",
+    "texture": "endsustain:model/named/pig_blade.png"
+  }
+}

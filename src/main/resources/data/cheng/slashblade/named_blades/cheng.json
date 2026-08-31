@@ -1,0 +1,26 @@
+{
+  "name": "cheng:cheng",
+  "enchantments": [
+    { "id": "minecraft:mending", "lvl": 1 },
+    { "id": "minecraft:unbreaking", "lvl": 10 },
+    { "id": "minecraft:sharpness", "lvl": 10 },
+    { "id": "minecraft:sweeping", "lvl": 10 },
+    { "id": "minecraft:looting", "lvl": 3 },
+    { "id": "minecraft:feather_falling", "lvl": 10 }
+  ],
+  "properties": {
+    "attack_base": 91.0,
+    "slash_art": "cheng:miaoqie",
+    "special_effects": [
+      "cheng:heart_palpitations",
+      "cheng:love_meow"
+    ],
+    "sword_type": [
+      "bewitched"
+    ]
+  },
+  "render": {
+    "model": "cheng:model/named/cheng/cheng.obj",
+    "texture": "cheng:model/named/cheng/cheng.png"
+  }
+}

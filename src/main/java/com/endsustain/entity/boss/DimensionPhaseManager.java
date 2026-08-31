@@ -14,6 +14,7 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.level.levelgen.structure.Structure;
@@ -57,13 +58,20 @@ final class DimensionPhaseManager {
                             pending.position.getY() + 0.1D,
                             pending.position.getZ() + 0.5D,
                             Set.of(), boss.getYRot(), boss.getXRot());
-                    if (!moved && !boss.isRemoved()) {
+                    if (moved) {
+                        // 阶段血量钳制：传送到新维度后血量恢复到阶段起始线，
+                        // 避免末地残血直接满足下一阶段阈值导致瞬间连续转场。
+                        if (boss.getHealth() < pending.healthFloor) boss.setHealth(pending.healthFloor);
+                    } else if (!boss.isRemoved()) {
                         Entity changed = boss.changeDimension(destination);
                         if (changed != null) {
                             changed.teleportTo(pending.position.getX() + 0.5D,
                                     pending.position.getY() + 0.1D,
                                     pending.position.getZ() + 0.5D);
                             changed.getPersistentData().putBoolean("EndsustainDimensionTransition", false);
+                            if (changed instanceof LivingEntity living && living.getHealth() < pending.healthFloor) {
+                                living.setHealth(pending.healthFloor);
+                            }
                         }
                     }
                     boss.getPersistentData().putBoolean("EndsustainDimensionTransition", false);
@@ -85,7 +93,8 @@ final class DimensionPhaseManager {
                     boss.getPersistentData().putBoolean("EndsustainDimensionTransition", true);
                     boss.setOfficialPhase(1);
                     PENDING.put(boss.getUUID(), new PendingTransfer(Level.NETHER, destination,
-                            boss.blockPosition().relative(boss.getDirection(), 2).above()));
+                            boss.blockPosition().relative(boss.getDirection(), 2).above(),
+                            boss.getMaxHealth() * 0.66F));
                     return true;
                 }
             }
@@ -102,7 +111,8 @@ final class DimensionPhaseManager {
                     boss.getPersistentData().putBoolean("EndsustainDimensionTransition", true);
                     boss.setOfficialPhase(2);
                     PENDING.put(boss.getUUID(), new PendingTransfer(Level.OVERWORLD, destination,
-                            boss.blockPosition().relative(boss.getDirection(), 2).above()));
+                            boss.blockPosition().relative(boss.getDirection(), 2).above(),
+                            boss.getMaxHealth() * 0.33F));
                     return true;
                 }
             }
@@ -220,12 +230,16 @@ final class DimensionPhaseManager {
         private final ResourceKey<Level> dimension;
         private final BlockPos position;
         private final BlockPos entrance;
+        /** 传送完成后 Boss 血量不得低于该阶段起始线。 */
+        private final float healthFloor;
         private int ticks;
 
-        private PendingTransfer(ResourceKey<Level> dimension, BlockPos position, BlockPos entrance) {
+        private PendingTransfer(ResourceKey<Level> dimension, BlockPos position,
+                                BlockPos entrance, float healthFloor) {
             this.dimension = dimension;
             this.position = position;
             this.entrance = entrance;
+            this.healthFloor = healthFloor;
         }
     }
 }

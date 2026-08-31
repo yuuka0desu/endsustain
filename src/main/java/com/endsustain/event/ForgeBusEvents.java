@@ -31,6 +31,7 @@ import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.enchantment.EnchantmentHelper;
 import net.minecraft.world.item.enchantment.Enchantments;
+import net.minecraft.world.level.Level;
 import net.minecraft.world.phys.Vec3;
 import net.minecraftforge.registries.ForgeRegistries;
 import net.minecraftforge.eventbus.api.EventPriority;
@@ -46,6 +47,7 @@ import net.minecraftforge.event.entity.player.AttackEntityEvent;
 import net.minecraftforge.event.entity.player.PlayerInteractEvent;
 import net.minecraftforge.event.server.ServerAboutToStartEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
+import net.minecraftforge.fml.LogicalSide;
 import net.minecraftforge.fml.common.Mod;
 
 import java.util.HashMap;
@@ -127,7 +129,8 @@ public class ForgeBusEvents {
                 level.addFreshEntity(arrow);
             }
         }
-        for (Player player : level.players()) {
+        // 快照遍历：forceKill 触发玩家死亡流程时，共享玩家列表可能被同步修改
+        for (Player player : new java.util.ArrayList<>(level.players())) {
             double dx = player.getX() - presence.position.x;
             double dy = player.getY() - presence.position.y;
             double dz = player.getZ() - presence.position.z;
@@ -159,8 +162,13 @@ public class ForgeBusEvents {
     public static void onServerAboutToStart(ServerAboutToStartEvent event) {
         if (!compatInitialized) {
             compatInitialized = true;
-            // 此时所有 mod、配置、资源均已完成加载
-            CompatHandler.init(null);
+            // 此时所有 mod、配置、资源均已完成加载；
+            // 兼容模块加载失败不应影响服务器启动
+            try {
+                CompatHandler.init(null);
+            } catch (Throwable t) {
+                EndSustain.LOGGER.error("[终焉维系] 兼容初始化失败（不影响核心流程）", t);
+            }
         }
     }
 
@@ -291,6 +299,35 @@ public class ForgeBusEvents {
             }
             boss.onQunUKilled(qun.getUUID());
         }
+    }
+
+    /** 终末之路：击杀对应技能 Boss 且上一级已解锁时，直接解锁该等级与对应故事幕。 */
+    @SubscribeEvent
+    public static void onSkillBossKilled(LivingDeathEvent event) {
+        if (!(event.getEntity().level() instanceof ServerLevel)) return;
+        ResourceLocation typeId = ForgeRegistries.ENTITY_TYPES.getKey(event.getEntity().getType());
+        if (typeId == null) return;
+        ServerPlayer killer = event.getSource().getEntity() instanceof ServerPlayer sourcePlayer
+                ? sourcePlayer
+                : event.getEntity().getLastHurtByMob() instanceof ServerPlayer lastPlayer ? lastPlayer : null;
+        if (killer == null) return;
+        com.endsustain.progress.FinalePathProgress.onBossKilled(killer, typeId);
+        // 故事线同步：与终末技能一致，击杀实体开启对应幕
+        com.endsustain.progress.FinalePathProgress.witnessStoryForBossKill(killer, typeId);
+    }
+
+    /** 故事线第三幕：检测到达过下界。 */
+    @SubscribeEvent
+    public static void onPlayerStoryDimension(TickEvent.PlayerTickEvent event) {
+        if (event.phase != TickEvent.Phase.END || event.side != LogicalSide.SERVER) return;
+        if (!(event.player instanceof ServerPlayer player)) return;
+        if (player.level().dimension() != Level.NETHER) return;
+        String dimKey = player.level().dimension().location().toString();
+        String last = player.getPersistentData().getString("EndsustainLastStoryDimension");
+        if (dimKey.equals(last)) return;
+        player.getPersistentData().putString("EndsustainLastStoryDimension", dimKey);
+        com.endsustain.progress.FinalePathProgress.witnessStory(player,
+                com.endsustain.progress.FinalePathProgress.STORY_NETHER_NODE);
     }
 
     @SubscribeEvent(priority = EventPriority.HIGHEST, receiveCanceled = true)
@@ -461,6 +498,16 @@ public class ForgeBusEvents {
         event.getDispatcher().register(Commands.literal("endsustain_test_charm")
                 .requires(source -> source.hasPermission(2))
                 .executes(ctx -> triggerNearestFinaleCharm(ctx.getSource())));
+        // 测试指令：一键解锁全部故事幕与技能阶位
+        event.getDispatcher().register(Commands.literal("endsustain_unlock_all")
+                .requires(source -> source.hasPermission(2))
+                .executes(ctx -> {
+                    ServerPlayer player = ctx.getSource().getPlayerOrException();
+                    com.endsustain.progress.FinalePathProgress.unlockAll(player);
+                    ctx.getSource().sendSuccess(() ->
+                            Component.literal("已解锁全部终末之路故事幕与技能阶位"), true);
+                    return Command.SINGLE_SUCCESS;
+                }));
     }
 
     private static int triggerNearestFinaleCharm(net.minecraft.commands.CommandSourceStack source) {

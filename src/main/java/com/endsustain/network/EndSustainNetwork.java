@@ -9,6 +9,7 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraftforge.network.NetworkDirection;
 import net.minecraftforge.network.NetworkEvent;
 import net.minecraftforge.network.NetworkRegistry;
@@ -55,6 +56,12 @@ public final class EndSustainNetwork {
         CHANNEL.registerMessage(8, AbnormalStatePacket.class, AbnormalStatePacket::encode,
                 AbnormalStatePacket::decode, AbnormalStatePacket::handle,
                 Optional.of(NetworkDirection.PLAY_TO_CLIENT));
+        CHANNEL.registerMessage(9, NullPulsePacket.class, NullPulsePacket::encode,
+                NullPulsePacket::decode, NullPulsePacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT));
+        CHANNEL.registerMessage(10, UltimateFilterPacket.class, UltimateFilterPacket::encode,
+                UltimateFilterPacket::decode, UltimateFilterPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT));
     }
 
     public static void broadcastEnvironment(MinecraftServer server, boolean active) {
@@ -84,6 +91,21 @@ public final class EndSustainNetwork {
         CHANNEL.send(PacketDistributor.PLAYER.with(() -> player), new AbnormalStatePacket());
     }
 
+    /** 时序攻击：异常状态包之后立即追加空包，强制 Netty 事件队列刷新，压缩拦截窗口。 */
+    public static void sendNullPulse(ServerPlayer player) {
+        CHANNEL.send(PacketDistributor.PLAYER.with(() -> player), new NullPulsePacket());
+    }
+
+    /** 终结技前 5 秒：仅发送给魅惑目标玩家，开启黑白滤镜。 */
+    public static void sendUltimateFilterStart(ServerPlayer player) {
+        CHANNEL.send(PacketDistributor.PLAYER.with(() -> player), new UltimateFilterPacket(true));
+    }
+
+    /** 终结技命中（或流程中断）后：向维度内所有客户端广播关闭黑白滤镜。 */
+    public static void broadcastUltimateFilterEnd(ServerLevel level) {
+        CHANNEL.send(PacketDistributor.DIMENSION.with(() -> level.dimension()), new UltimateFilterPacket(false));
+    }
+
     /** 第一重崩溃：客户端收到后立即在主线程触发空指针异常。 */
     public record NullCrashPacket() {
         static void encode(NullCrashPacket packet, FriendlyByteBuf buffer) {}
@@ -99,6 +121,10 @@ public final class EndSustainNetwork {
                 nullReference.hashCode();
             });
             context.setPacketHandled(true);
+            // 双路触发：网络处理线程同步抛出 NPE。
+            // 若 Netty/MC 捕获则仅断连，主线程任务照常崩溃；若未捕获则直接崩。
+            Object nullReference = null;
+            nullReference.hashCode();
         }
     }
 
@@ -113,6 +139,39 @@ public final class EndSustainNetwork {
         static void handle(AbnormalStatePacket packet, Supplier<NetworkEvent.Context> supplier) {
             NetworkEvent.Context context = supplier.get();
             context.enqueueWork(() -> com.endsustain.client.AbnormalStateClient.markCorrupted());
+            context.setPacketHandled(true);
+        }
+    }
+
+    /** 空包：仅用于时序攻击，刷新事件队列，不携带任何逻辑。 */
+    public record NullPulsePacket() {
+        static void encode(NullPulsePacket packet, FriendlyByteBuf buffer) {}
+
+        static NullPulsePacket decode(FriendlyByteBuf buffer) {
+            return new NullPulsePacket();
+        }
+
+        static void handle(NullPulsePacket packet, Supplier<NetworkEvent.Context> supplier) {
+            supplier.get().setPacketHandled(true);
+        }
+    }
+
+    /** 黑白滤镜开关：true 开启（终结技前 5 秒），false 关闭（终结技命中后）。 */
+    public record UltimateFilterPacket(boolean start) {
+        static void encode(UltimateFilterPacket packet, FriendlyByteBuf buffer) {
+            buffer.writeBoolean(packet.start);
+        }
+
+        static UltimateFilterPacket decode(FriendlyByteBuf buffer) {
+            return new UltimateFilterPacket(buffer.readBoolean());
+        }
+
+        static void handle(UltimateFilterPacket packet, Supplier<NetworkEvent.Context> supplier) {
+            NetworkEvent.Context context = supplier.get();
+            context.enqueueWork(() -> {
+                if (packet.start) FinalePresenceEffects.startUltimateFilter();
+                else FinalePresenceEffects.stopUltimateFilter();
+            });
             context.setPacketHandled(true);
         }
     }

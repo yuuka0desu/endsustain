@@ -97,6 +97,14 @@ description='''${mod_description}'''
     ordering="AFTER"
     side="BOTH"
 
+# ---- 橙「喵切」命名刀前置 ----
+[[dependencies.${mod_id}]]
+    modId="slashblade"
+    mandatory=true
+    versionRange="[1.1.23,1.1.24)"
+    ordering="AFTER"
+    side="BOTH"
+
 # ---- 四个前置（硬依赖） ----
 [[dependencies.${mod_id}]]
     modId="irons_spellbooks"

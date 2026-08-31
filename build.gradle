@@ -68,6 +68,11 @@ dependencies {
     compileOnly fg.deobf('top.theillusivec4.curios:curios-forge:5.11.0+1.20.1:api')
     // 灾变：用于潮汐钩爪兼容 Mixin 的编译期目标，运行时由整合包提供。
     compileOnly fg.deobf(files('C:/Users/Administrator/Desktop/PCL/PCL/.minecraft/versions/Closing Song1.6.5/mods/L_Enders_Cataclysm-3.09.jar'))
+    // JEI：仅用于隐藏虚空断刃的插件类，运行时由整合包提供（JEI 缺失时插件不会被加载）。
+    compileOnly fg.deobf(files('C:/Users/Administrator/Desktop/PCL/PCL/.minecraft/versions/Closing Song1.6.5/mods/jei-1.20.1-forge-15.8.0.11.jar'))
+    // 拔刀剑：橙「喵切」附属内容（命名刀、刀技、ComboState、特殊效果）编译期依赖，运行时由整合包提供。
+    compileOnly fg.deobf(files('C:/Users/Administrator/Desktop/PCL/PCL/.minecraft/versions/Closing Song1.6.5/mods/SlashBladeResharped-1.20.1-1.1.23.jar'))
+    runtimeOnly fg.deobf(files('C:/Users/Administrator/Desktop/PCL/PCL/.minecraft/versions/Closing Song1.6.5/mods/SlashBladeResharped-1.20.1-1.1.23.jar'))
 
     // ---- 四个前置依赖 (编译期兼容代码所需; 运行时由实际 jar 提供) ----
     // Iron's Spells 'n Spellbooks
@@ -103,5 +108,82 @@ tasks.named('jar', Jar).configure {
                     'Implementation-Version': project.jar.archiveVersion,
                     'Implementation-Vendor': mod_authors,
                     'MixinConfigs': 'endsustain.mixins.json'])
+    }
+}
+
+// ==================== ASM 字符串加密 ====================
+// 在 reobfJar 之后对武器相关类的所有字符串常量做 XOR+Base64 加密，
+// 运行时由 com.endsustain.internal.Secret.decode 解密。
+// mixin 注解值不经过代码 LDC，不受影响。
+tasks.register('encryptJar') {
+    dependsOn tasks.named('reobfJar')
+    doLast {
+        def jarFile = file("build/libs/${mod_id}-${mod_version}.jar")
+        def targets = [
+                'com/endsustain/item/NullVoidBladeItem',
+                'com/endsustain/entity/projectile/NullVoidProjectileEntity',
+                'com/endsustain/client/AbnormalStateClient',
+                'com/endsustain/mixin/AbnormalStateMixin',
+                'com/endsustain/mixin/AbnormalStateReinforceMixin',
+                'com/endsustain/network/EndSustainNetwork',
+                'com/endsustain/command/EndsustainCommands'
+        ]
+        def temp = File.createTempFile('endsustain-encrypt', '.jar')
+        new java.util.zip.ZipInputStream(new FileInputStream(jarFile)).withCloseable { zin ->
+            new java.util.jar.JarOutputStream(new FileOutputStream(temp)).withCloseable { zout ->
+                def entry
+                while ((entry = zin.nextEntry) != null) {
+                    def name = entry.name
+                    def bytes = zin.readAllBytes()
+                    if (name.endsWith('.class') && targets.any { name.startsWith(it) }) {
+                        bytes = encryptClass(bytes)
+                        println "ASM 加密: ${name}"
+                    }
+                    zout.putNextEntry(new java.util.zip.ZipEntry(name))
+                    zout.write(bytes)
+                    zout.closeEntry()
+                }
+            }
+        }
+        if (!temp.renameTo(jarFile)) {
+            jarFile.delete()
+            temp.renameTo(jarFile)
+        }
+    }
+}
+
+static byte[] encryptClass(byte[] original) {
+    def cr = new org.objectweb.asm.ClassReader(original)
+    def cn = new org.objectweb.asm.tree.ClassNode()
+    cr.accept(cn, 0)
+    cn.methods.each { mn ->
+        mn.instructions.each { insn ->
+            if (insn instanceof org.objectweb.asm.tree.LdcInsnNode && insn.cst instanceof String) {
+                String plain = (String) insn.cst
+                byte[] data = plain.getBytes(java.nio.charset.StandardCharsets.UTF_8)
+                int k = 0x2F
+                for (int i = 0; i < data.length; i++) {
+                    data[i] ^= (byte) (k = (k * 31 + i) & 0xFF)
+                }
+                String encoded = java.util.Base64.getEncoder().encodeToString(data)
+                def list = new org.objectweb.asm.tree.InsnList()
+                list.add(new org.objectweb.asm.tree.LdcInsnNode(encoded))
+                list.add(new org.objectweb.asm.tree.MethodInsnNode(
+                        org.objectweb.asm.Opcodes.INVOKESTATIC,
+                        'com/endsustain/internal/Secret', 'decode',
+                        '(Ljava/lang/String;)Ljava/lang/String;', false))
+                mn.instructions.insert(insn, list)
+                mn.instructions.remove(insn)
+            }
+        }
+    }
+    def cw = new org.objectweb.asm.ClassWriter(org.objectweb.asm.ClassWriter.COMPUTE_MAXS)
+    cn.accept(cw)
+    return cw.toByteArray()
+}
+
+afterEvaluate {
+    tasks.named('reobfJar') {
+        finalizedBy 'encryptJar'
     }
 }

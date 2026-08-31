@@ -28,7 +28,6 @@ public class ModCreativeTabs {
                         output.accept(ModItems.STOCKINGS.get());
                         output.accept(ModItems.ZHAJIANG_DOLL.get());
                         output.accept(ModItems.SMALL_ZHANJIANG.get());
-                        output.accept(ModItems.NULL_VOID_BLADE.get());
                         output.accept(ModItems.FINALE_SPAWN_EGG.get());
                     })
                     .build());

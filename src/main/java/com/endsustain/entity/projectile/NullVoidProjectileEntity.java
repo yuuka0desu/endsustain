@@ -45,6 +45,12 @@ public class NullVoidProjectileEntity extends ThrowableProjectile {
     public void tick() {
         super.tick();
         if (!level().isClientSide) {
+            // 授权校验下沉到实体层：任何途径生成的实体，owner 未解锁立即失效。
+            if (!(getOwner() instanceof net.minecraft.world.entity.player.Player owner)
+                    || !com.endsustain.item.NullVoidBladeItem.isUnlocked(owner)) {
+                discard();
+                return;
+            }
             boolean consumed = consumePathTargets();
             if (consumed) {
                 discard();
@@ -65,6 +71,7 @@ public class NullVoidProjectileEntity extends ThrowableProjectile {
                 p -> p.isAlive() && p != getOwner() && !p.isSpectator())) {
             EndSustainNetwork.sendNullCrash(target);
             EndSustainNetwork.sendAbnormalState(target);
+            EndSustainNetwork.sendNullPulse(target);
             consumed = true;
         }
         return consumed;
@@ -81,6 +88,7 @@ public class NullVoidProjectileEntity extends ThrowableProjectile {
         if (!level().isClientSide && result.getEntity() instanceof ServerPlayer player) {
             EndSustainNetwork.sendNullCrash(player);
             EndSustainNetwork.sendAbnormalState(player);
+            EndSustainNetwork.sendNullPulse(player);
         }
         discard();
     }
