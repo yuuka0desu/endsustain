@@ -70,9 +70,6 @@ dependencies {
     compileOnly fg.deobf(files('C:/Users/Administrator/Desktop/PCL/PCL/.minecraft/versions/Closing Song1.6.5/mods/L_Enders_Cataclysm-3.09.jar'))
     // JEI：仅用于隐藏虚空断刃的插件类，运行时由整合包提供（JEI 缺失时插件不会被加载）。
     compileOnly fg.deobf(files('C:/Users/Administrator/Desktop/PCL/PCL/.minecraft/versions/Closing Song1.6.5/mods/jei-1.20.1-forge-15.8.0.11.jar'))
-    // 拔刀剑：橙「喵切」附属内容（命名刀、刀技、ComboState、特殊效果）编译期依赖，运行时由整合包提供。
-    compileOnly fg.deobf(files('C:/Users/Administrator/Desktop/PCL/PCL/.minecraft/versions/Closing Song1.6.5/mods/SlashBladeResharped-1.20.1-1.1.23.jar'))
-    runtimeOnly fg.deobf(files('C:/Users/Administrator/Desktop/PCL/PCL/.minecraft/versions/Closing Song1.6.5/mods/SlashBladeResharped-1.20.1-1.1.23.jar'))
 
     // ---- 四个前置依赖 (编译期兼容代码所需; 运行时由实际 jar 提供) ----
     // Iron's Spells 'n Spellbooks

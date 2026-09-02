@@ -30,12 +30,6 @@ public class EndSustain {
         ModEffects.register(modBus);
         com.endsustain.registry.ModCreativeTabs.register(modBus);
 
-        // 橙「喵切」与末影猪咪「蘸酱」SlashBlade 附属内容（mods.toml 已声明 slashblade 硬依赖）
-        if (net.minecraftforge.fml.ModList.get().isLoaded("slashblade")) {
-            com.endsustain.chengblade.ChengBladeIntegration.register(modBus);
-            com.endsustain.pigblade.PigBladeIntegration.register(modBus);
-        }
-
         // compat 延迟到 FMLCommonSetupEvent 初始化，见 ModBusEvents
         LOGGER.info("[终焉维系] EndSustain 初始化完成");
     }

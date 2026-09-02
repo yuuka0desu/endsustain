@@ -31,9 +31,6 @@ public class ClientSetup {
         event.registerEntityRenderer(ModEntities.ILUSI_HOMING_TRIDENT.get(), NoopRenderer::new);
         event.registerEntityRenderer(ModEntities.SPELL_PROJECTILE.get(), NoopRenderer::new);
         event.registerEntityRenderer(ModEntities.NULL_VOID_PROJECTILE.get(), NoopRenderer::new);
-        // 末影猪咪：猪形态替身沿用 PigRenderer（幻影剑为原模组实体，无需注册渲染器）
-        event.registerEntityRenderer(com.endsustain.pigblade.registry.PigBladeRegistry.PIG_FORM.get(),
-                ctx -> new PigRenderer(ctx));
     }
 
     @SubscribeEvent
