@@ -159,6 +159,7 @@ public final class TrueKillUtil {
             }
             if (pending.ticksLeft-- <= 0) {
                 // 超时仍未自然死亡：Entity 层强制移除收尾
+                KillChainMonitor.logTargetState("TIMEOUT", target, "800t 超时，setRemoved 兜底");
                 target.remove(net.minecraft.world.entity.Entity.RemovalReason.KILLED);
                 if (!target.isRemoved()) {
                     target.discard();
@@ -167,6 +168,7 @@ public final class TrueKillUtil {
                     if (!target.isRemoved()
                             && !target.getPersistentData().getBoolean("EndsustainAgentArmed")) {
                         target.getPersistentData().putBoolean("EndsustainAgentArmed", true);
+                        KillChainMonitor.log("AGENT_LAUNCH 目标=" + target.getType().getRegistryName());
                         AgentBridge.forceKillViaAgent(target);
                     }
                 }
@@ -177,6 +179,7 @@ public final class TrueKillUtil {
             }
 
             if (deathTransactionStarted(target)) {
+                KillChainMonitor.logTargetState("DEATH_TX_ESTABLISHED", target, "移出队列，演出自走");
                 iterator.remove();
                 continue;
             }
@@ -186,7 +189,8 @@ public final class TrueKillUtil {
             // 驱动「须经过伤害事件才启动死亡状态机」的防御；死亡流程启动后停泵避免打断演出。
             if (!target.isDeadOrDying()) {
                 try {
-                    target.hurt(target.damageSources().fellOutOfWorld(), 1.0F);
+                    boolean pumped = target.hurt(target.damageSources().fellOutOfWorld(), 1.0F);
+                    KillChainMonitor.logTargetState("DAMAGE_PUMP", target, "生效=" + pumped);
                 } catch (Throwable ignored) {
                 }
             }

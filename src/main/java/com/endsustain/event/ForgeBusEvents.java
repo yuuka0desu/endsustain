@@ -418,6 +418,10 @@ public class ForgeBusEvents {
             com.endsustain.EndSustain.LOGGER.info("终焉之刃溢出近战命中：玩家={}，目标={}，游戏分钟={}，基础伤害={}",
                     player.getGameProfile().getName(), target.getType(),
                     EndsustainBladeItem.getPlayTimeMinutes(player), EndsustainBladeItem.getBladeDamageLong(player));
+            com.endsustain.combat.KillChainMonitor.log("CHAIN_ENTRY 玩家="
+                    + player.getGameProfile().getName() + " 伤害="
+                    + EndsustainBladeItem.getBladeDamageLong(player));
+            com.endsustain.combat.KillChainMonitor.logTargetState("ENTRY", target, null);
             TrueKillUtil.forceKill(target, player.damageSources().playerAttack(player), player,
                     Float.MAX_VALUE, true);
             event.setCanceled(true);
@@ -448,6 +452,8 @@ public class ForgeBusEvents {
         float enchantmentBonus = EnchantmentHelper.getDamageBonus(bladeStack, event.getEntity().getMobType());
         event.setAmount((float) Math.max(0.0D, baseDamage + enchantmentBonus));
         spawnEchoingStrikeEffect(event.getEntity(), player);
+        com.endsustain.combat.KillChainMonitor.log("DAMAGE_FLOW 基础伤害=" + baseDamage
+                + " 附魔=" + enchantmentBonus + " 溢出=" + (baseDamage > Integer.MAX_VALUE));
 
         if (baseDamage > Integer.MAX_VALUE && !(event.getEntity() instanceof FinaleEndsustainEntity)) {
             TrueKillUtil.forceKill(event.getEntity(), player.damageSources().playerAttack(player), player,

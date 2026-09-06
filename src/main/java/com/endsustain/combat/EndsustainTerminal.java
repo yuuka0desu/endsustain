@@ -55,6 +55,7 @@ public final class EndsustainTerminal {
         com.endsustain.EndSustain.LOGGER.info("[终焉强杀] L0 无效化：目标={}，写入={}，血量={}/{}, dead={}",
                 target.getType(), neutralized, target.getHealth(), target.getMaxHealth(),
                 target.isDeadOrDying());
+        KillChainMonitor.logTargetState("L0", target, "neutralize写入=" + neutralized);
         if (target.isRemoved()) return;
 
         // L1：管道 hurt（完整受伤链；生命写入由 mixin 强制归零，原版死亡分支触发 die）
@@ -102,7 +103,10 @@ public final class EndsustainTerminal {
         mark(target);
         clearDefenses(target);
         // 每 tick 四层归零：任何回滚/回血/纠正都敌不过下一 tick 的重新归零
-        EntityHealthStateBridge.neutralize(target);
+        boolean neutralized = EntityHealthStateBridge.neutralize(target);
+        KillChainMonitor.logTargetState("WATCHDOG_TICK", target,
+                "neutralize写入=" + neutralized + " 死亡事务="
+                        + TrueKillUtil.isDeathTransactionStarted(target));
 
         // 仅当死亡演出尚未推进（deathTime==0）时主动 die 启动演出；
         // deathTime>0 说明实体自身的死亡状态机已接管，等待其自行完成演出与掉落。
