@@ -180,13 +180,53 @@ public final class EntityHealthStateBridge {
     }
 
     /**
-     * 通用无效化：对目标执行全部四层归零，返回是否有任何写入发生。
+     * 无效化层 5：反向找生命值字段。
+     * 从 getHealth() 的返回值反向匹配：扫描目标类继承链上全部非静态
+     * Float/Double 实例字段，值 ≈ 当前生命 或 ≈ 最大生命 → 直接写 0。
+     * 覆盖「生命存储在实例字段（而非数据项）」的实体。
+     */
+    public static boolean zeroInstanceHealthFields(LivingEntity target) {
+        float health = target.getHealth();
+        float maxHealth = target.getMaxHealth();
+        boolean hit = false;
+        for (Class<?> type = target.getClass();
+             type != null && LivingEntity.class.isAssignableFrom(type);
+             type = type.getSuperclass()) {
+            for (Field field : type.getDeclaredFields()) {
+                if (Modifier.isStatic(field.getModifiers())) continue;
+                Class<?> fieldType = field.getType();
+                if (fieldType != float.class && fieldType != double.class
+                        && fieldType != Float.class && fieldType != Double.class) continue;
+                try {
+                    field.setAccessible(true);
+                    Object value = field.get(target);
+                    if (!(value instanceof Number number)) continue;
+                    double v = number.doubleValue();
+                    boolean matchHealth = Math.abs(v - (double) health) <= EPSILON;
+                    boolean matchMax = Math.abs(v - (double) maxHealth) <= EPSILON;
+                    if (!matchHealth && !matchMax) continue;
+                    if (fieldType == double.class || fieldType == Double.class) {
+                        field.set(target, 0.0D);
+                    } else {
+                        field.set(target, 0.0F);
+                    }
+                    hit = true;
+                } catch (Throwable ignored) {
+                }
+            }
+        }
+        return hit;
+    }
+
+    /**
+     * 通用无效化：对目标执行全部五层归零，返回是否有任何写入发生。
      */
     public static boolean neutralize(LivingEntity target) {
         boolean hit = lockHealthAndCapToZero(target);
         hit |= zeroStringCodedHealth(target);
         hit |= zeroByteFlags(target);
         hit |= zeroPersistentFloats(target);
+        hit |= zeroInstanceHealthFields(target);
         return hit;
     }
 

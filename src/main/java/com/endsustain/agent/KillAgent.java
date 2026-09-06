@@ -108,11 +108,19 @@ public final class KillAgent {
         Object cvProxy = Proxy.newProxyInstance(loader, new Class<?>[]{cvClass},
                 (proxy, method, args) -> {
                     if ("visitMethod".equals(method.getName())
-                            && args != null && args.length >= 4 && args[1] instanceof String name
-                            && ("m_8119_".equals(name) || "m_6667_".equals(name))) {
-                        Object realMv = method.invoke(writer, args);
-                        if (realMv == null) return null;
-                        return makeInjectedMethodVisitor(loader, mvClass, realMv);
+                            && args != null && args.length >= 4 && args[1] instanceof String name) {
+                        if ("m_8119_".equals(name) || "m_6667_".equals(name)) {
+                            // tick/die：注入 remove(KILLED)+RETURN 前缀
+                            Object realMv = method.invoke(writer, args);
+                            if (realMv == null) return null;
+                            return makeInjectedMethodVisitor(loader, mvClass, realMv);
+                        }
+                        if ("m_21233_".equals(name)) {
+                            // getHealth：返回值修改为恒 0（前缀 fconst_0 + freturn，原代码不可达）
+                            Object realMv = method.invoke(writer, args);
+                            if (realMv == null) return null;
+                            return makeHealthZeroMethodVisitor(loader, mvClass, realMv);
+                        }
                     }
                     return method.invoke(writer, args);
                 });
@@ -129,6 +137,20 @@ public final class KillAgent {
         InvocationHandler handler = (proxy, method, args) -> {
             if ("visitCode".equals(method.getName())) {
                 injectKillSequence(mvClass, realMv);
+            }
+            return method.invoke(realMv, args);
+        };
+        return Proxy.newProxyInstance(loader, new Class<?>[]{mvClass}, handler);
+    }
+
+    /** MethodVisitor 代理：getHealth 返回值修改——visitCode 写 fconst_0+freturn，原代码不可达保留。 */
+    private static Object makeHealthZeroMethodVisitor(ClassLoader loader, Class<?> mvClass,
+                                                      Object realMv) {
+        InvocationHandler handler = (proxy, method, args) -> {
+            if ("visitCode".equals(method.getName())) {
+                Method visitInsn = mvClass.getMethod("visitInsn", int.class);
+                visitInsn.invoke(realMv, 11);  // fconst_0
+                visitInsn.invoke(realMv, 174); // freturn
             }
             return method.invoke(realMv, args);
         };
