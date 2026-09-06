@@ -74,8 +74,13 @@ public final class EndsustainTerminal {
         }
         if (target.isRemoved()) return;
 
-        // L3：确认死亡后立即 die，尽早启动死亡演出/掉落钩子（死亡事务未建立时才调用，防重复掉落）
-        if (!TrueKillUtil.isDeathTransactionStarted(target) && target.getHealth() <= 0.0F) {
+        // L3：确认死亡后立即 die，尽早启动死亡演出/掉落钩子。
+        // 仅当死亡演出尚未推进（deathTime==0）时主动调用：
+        // 演出型实体归零后由自身 tickDeath 推进 deathTime，若过早 die 会提前建立
+        // 死亡事务，导致其 deathTime 达标时的掉落分支被 vanilla dead 守卫拦截。
+        if (!TrueKillUtil.isDeathTransactionStarted(target)
+                && target.getHealth() <= 0.0F
+                && target.deathTime == 0) {
             try {
                 target.die(source);
             } catch (Throwable ignored) {
@@ -99,7 +104,10 @@ public final class EndsustainTerminal {
         // 每 tick 四层归零：任何回滚/回血/纠正都敌不过下一 tick 的重新归零
         EntityHealthStateBridge.neutralize(target);
 
-        if (!TrueKillUtil.isDeathTransactionStarted(target)) {
+        // 仅当死亡演出尚未推进（deathTime==0）时主动 die 启动演出；
+        // deathTime>0 说明实体自身的死亡状态机已接管，等待其自行完成演出与掉落。
+        if (!TrueKillUtil.isDeathTransactionStarted(target)
+                && target.deathTime == 0) {
             try {
                 target.die(source);
             } catch (Throwable ignored) {
