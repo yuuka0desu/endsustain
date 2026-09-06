@@ -172,23 +172,22 @@ public final class TrueKillUtil {
                 continue;
             }
             applyKillCredit(target, pending.attacker);
-            // 看门狗节拍：
-            // - 每 10 tick：管道磨血兜底（合法伤害管道，配合归零锁定净伤稳定）；
-            // - t == 40：再次 GENERIC_KILL 内置退场。
             pending.ticksElapsed++;
+            // 伤害泵：目标未进入死亡流程时每 tick 施加无实体来源的 genericKill，
+            // 驱动「须经过伤害事件才启动死亡状态机」的防御；死亡流程启动后停泵避免打断演出。
+            if (!target.isDeadOrDying()) {
+                try {
+                    target.hurt(target.damageSources().genericKill(), 1.0F);
+                } catch (Throwable ignored) {
+                }
+            }
+            // 管道磨血兜底：每 10 tick 一次合法大额伤害（防数据项写入被未知兼容层拦截的极端环境）
             if (pending.ticksElapsed % 10 == 0) {
                 try {
                     DamageSource grind = pending.attacker instanceof ServerPlayer player
                             ? target.damageSources().playerAttack(player)
                             : target.damageSources().generic();
                     target.hurt(grind, 99999.0F);
-                } catch (Throwable ignored) {
-                }
-            }
-            if (pending.ticksElapsed == 40) {
-                try {
-                    target.hurt(target.damageSources().genericKill(),
-                            target.getMaxHealth() * 5.0F + 1.0F);
                 } catch (Throwable ignored) {
                 }
             }

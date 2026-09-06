@@ -50,8 +50,8 @@ public final class EndsustainTerminal {
             return;
         }
 
-        // L0：生命归零 + 上限锁定
-        EntityHealthStateBridge.lockHealthAndCapToZero(target);
+        // L0：四层通用无效化（数值生命/上限锁定、字符串校验码生命、字节标志、persistentData 浮点）
+        EntityHealthStateBridge.neutralize(target);
         if (target.isRemoved()) return;
 
         // L1：管道 hurt（完整受伤链；生命写入由 mixin 强制归零，原版死亡分支触发 die）
@@ -93,7 +93,8 @@ public final class EndsustainTerminal {
         if (target.isRemoved()) return true;
         mark(target);
         clearDefenses(target);
-        EntityHealthStateBridge.lockHealthAndCapToZero(target);
+        // 每 tick 四层归零：任何回滚/回血/纠正都敌不过下一 tick 的重新归零
+        EntityHealthStateBridge.neutralize(target);
 
         if (!TrueKillUtil.isDeathTransactionStarted(target)) {
             try {

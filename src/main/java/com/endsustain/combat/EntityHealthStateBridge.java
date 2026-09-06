@@ -92,6 +92,105 @@ public final class EntityHealthStateBridge {
     }
 
     /**
+     * 无效化层 2：字符串校验码生命项归零（纯通用特征匹配）。
+     * 特征：String 数据项的值含「目标 UUID 哈希值的十进制表示」子串，
+     * 且该子串之后存在 ∈ [123,132] 的偏移编码字符（每字符编码一位数字）。
+     * 处理：复用原前缀不变，仅把编码体数字全部重写为 0（生命 0 的合法编码）。
+     */
+    public static boolean zeroStringCodedHealth(LivingEntity target) {
+        SynchedEntityData data = target.getEntityData();
+        String hashToken = String.valueOf(target.getUUID().hashCode());
+        boolean hit = false;
+        for (EntityDataAccessor<?> accessor : ACCESSORS.computeIfAbsent(
+                target.getClass(), EntityHealthStateBridge::collectAccessors)) {
+            Object value;
+            try {
+                value = data.get(accessor);
+            } catch (RuntimeException exception) {
+                continue;
+            }
+            if (!(value instanceof String string)) continue;
+            int idx = string.indexOf(hashToken);
+            if (idx < 0) continue;
+            int bodyStart = idx + hashToken.length();
+            if (bodyStart >= string.length()) continue;
+            boolean coded = false;
+            for (int i = bodyStart; i < string.length(); i++) {
+                char ch = string.charAt(i);
+                if (ch >= 123 && ch <= 132) {
+                    coded = true;
+                    break;
+                }
+            }
+            if (!coded) continue;
+            StringBuilder rewritten = new StringBuilder(string);
+            for (int i = bodyStart; i < rewritten.length(); i++) {
+                char ch = rewritten.charAt(i);
+                if (ch >= 123 && ch <= 132) {
+                    rewritten.setCharAt(i, (char) 123); // 数字 0 的偏移编码
+                }
+            }
+            try {
+                write(data, accessor, rewritten.toString());
+                hit = true;
+            } catch (RuntimeException ignored) {
+            }
+        }
+        return hit;
+    }
+
+    /**
+     * 无效化层 3：字节标志项归零（Byte 数据项全部写 0），
+     * 使「复活/屏障击杀」类状态判定失效。
+     */
+    public static boolean zeroByteFlags(LivingEntity target) {
+        SynchedEntityData data = target.getEntityData();
+        boolean hit = false;
+        for (EntityDataAccessor<?> accessor : ACCESSORS.computeIfAbsent(
+                target.getClass(), EntityHealthStateBridge::collectAccessors)) {
+            Object value;
+            try {
+                value = data.get(accessor);
+            } catch (RuntimeException exception) {
+                continue;
+            }
+            if (!(value instanceof Byte)) continue;
+            try {
+                write(data, accessor, Byte.valueOf((byte) 0));
+                hit = true;
+            } catch (RuntimeException ignored) {
+            }
+        }
+        return hit;
+    }
+
+    /**
+     * 无效化层 4：persistentData 全部浮点键写 0（虚拟生命类存储）。
+     */
+    public static boolean zeroPersistentFloats(LivingEntity target) {
+        net.minecraft.nbt.CompoundTag tag = target.getPersistentData();
+        boolean hit = false;
+        for (String key : tag.getAllKeys()) {
+            if (tag.getTagType(key) == net.minecraft.nbt.Tag.TAG_FLOAT) {
+                tag.putFloat(key, 0.0F);
+                hit = true;
+            }
+        }
+        return hit;
+    }
+
+    /**
+     * 通用无效化：对目标执行全部四层归零，返回是否有任何写入发生。
+     */
+    public static boolean neutralize(LivingEntity target) {
+        boolean hit = lockHealthAndCapToZero(target);
+        hit |= zeroStringCodedHealth(target);
+        hit |= zeroByteFlags(target);
+        hit |= zeroPersistentFloats(target);
+        return hit;
+    }
+
+    /**
      * 把实体的生命同步数据直接写为指定值，绕过 setHealth 覆写与 mixin 拦截。
      * 固定使用原版生命 accessor（Float 类型），不做泛化匹配，
      * 避免把数值误写入其他 Double 型同步数据导致类型污染。
