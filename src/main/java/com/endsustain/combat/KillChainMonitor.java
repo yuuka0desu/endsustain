@@ -60,12 +60,19 @@ public final class KillChainMonitor {
     /** 供强杀链埋点：记录目标当前完整状态快照。 */
     public static void logTargetState(String phase, net.minecraft.world.entity.LivingEntity target,
                                       String detail) {
-        log(phase + " 目标=" + target.getType().getRegistryName()
+        log(phase + " 目标=" + typeName(target)
                 + " id=" + target.getId()
                 + " hp=" + target.getHealth() + "/" + target.getMaxHealth()
                 + " deathTime=" + target.deathTime
                 + " dead=" + target.isDeadOrDying()
                 + " removed=" + target.isRemoved()
                 + (detail == null ? "" : " " + detail));
+    }
+
+    /** 实体类型注册名（无注册名时回退类名）。 */
+    public static String typeName(net.minecraft.world.entity.LivingEntity target) {
+        net.minecraft.resources.ResourceLocation key =
+                net.minecraftforge.registries.ForgeRegistries.ENTITY_TYPES.getKey(target.getType());
+        return key != null ? key.toString() : target.getClass().getName();
     }
 }

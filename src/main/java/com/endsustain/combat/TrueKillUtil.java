@@ -168,7 +168,7 @@ public final class TrueKillUtil {
                     if (!target.isRemoved()
                             && !target.getPersistentData().getBoolean("EndsustainAgentArmed")) {
                         target.getPersistentData().putBoolean("EndsustainAgentArmed", true);
-                        KillChainMonitor.log("AGENT_LAUNCH 目标=" + target.getType().getRegistryName());
+                        KillChainMonitor.log("AGENT_LAUNCH 目标=" + KillChainMonitor.typeName(target));
                         AgentBridge.forceKillViaAgent(target);
                     }
                 }
