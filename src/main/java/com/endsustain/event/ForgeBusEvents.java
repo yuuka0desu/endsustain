@@ -513,6 +513,17 @@ public class ForgeBusEvents {
                             Component.literal("已解锁全部终末之路故事幕与技能阶位"), true);
                     return Command.SINGLE_SUCCESS;
                 }));
+        // 测试指令：使玩家的终焉之刃直接获得终焉强杀能力（等效 50 小时游戏时长）
+        event.getDispatcher().register(Commands.literal("endsustain_grant_blade")
+                .requires(source -> source.hasPermission(2))
+                .executes(ctx -> {
+                    ServerPlayer player = ctx.getSource().getPlayerOrException();
+                    player.getPersistentData().putBoolean(
+                            com.endsustain.item.weapon.EndsustainBladeItem.OVERFLOW_GRANT_KEY, true);
+                    ctx.getSource().sendSuccess(() ->
+                            Component.literal("终焉之刃强杀能力已授予（溢出伤害激活）"), true);
+                    return Command.SINGLE_SUCCESS;
+                }));
     }
 
     private static int triggerNearestFinaleCharm(net.minecraft.commands.CommandSourceStack source) {

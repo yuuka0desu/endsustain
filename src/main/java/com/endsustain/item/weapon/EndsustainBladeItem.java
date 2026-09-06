@@ -37,12 +37,18 @@ public class EndsustainBladeItem extends TridentItem {
     public static final String STACK_DATA_KEY = "EndsustainBladeStack";
     private static final String PLAY_MINUTES_KEY = "EndsustainPlayMinutes";
     private static final long DAMAGE_PER_MINUTE = 745_700L;
+    /** 测试标记：直接授予终焉强杀能力（等效 50 小时游戏时长）。 */
+    public static final String OVERFLOW_GRANT_KEY = "EndsustainBladeOverflowGrant";
+    private static final int GRANTED_MINUTES = 3000;
 
     public EndsustainBladeItem(Properties properties) {
         super(properties);
     }
 
     public static int getPlayTimeMinutes(ServerPlayer player) {
+        if (player.getPersistentData().getBoolean(OVERFLOW_GRANT_KEY)) {
+            return GRANTED_MINUTES;
+        }
         int ticks = player.getStats().getValue(Stats.CUSTOM.get(Stats.PLAY_TIME));
         return Math.max(0, ticks / (20 * 60));
     }
