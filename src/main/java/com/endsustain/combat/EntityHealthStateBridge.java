@@ -50,6 +50,48 @@ public final class EntityHealthStateBridge {
     }
 
     /**
+     * 多路径绝对击杀 L0：生命归零 + 上限锁定（纯通用，无针对性调用）。
+     * 把目标类继承链上全部「值 ≈ 当前生命 或 ≈ 最大生命」的 Float/Double 同步项
+     * 直接写 0 且不还原——上限类同步项一并归零后，回血/回滚会被自身钳制到 0，
+     * 形成死亡不可逆锁定。返回是否完成至少一次成功写入。
+     */
+    public static boolean lockHealthAndCapToZero(LivingEntity target) {
+        SynchedEntityData data = target.getEntityData();
+        float health = target.getHealth();
+        float maxHealth = target.getMaxHealth();
+        boolean hit = false;
+
+        if (VANILLA_HEALTH != null) {
+            try {
+                data.set(VANILLA_HEALTH, 0.0F);
+                hit = true;
+            } catch (RuntimeException ignored) {
+            }
+        }
+
+        for (EntityDataAccessor<?> accessor : ACCESSORS.computeIfAbsent(
+                target.getClass(), EntityHealthStateBridge::collectAccessors)) {
+            Object value;
+            try {
+                value = data.get(accessor);
+            } catch (RuntimeException exception) {
+                continue;
+            }
+            if (!(value instanceof Float) && !(value instanceof Double)) continue;
+            double number = ((Number) value).doubleValue();
+            boolean matchesHealth = Math.abs(number - (double) health) <= EPSILON;
+            boolean matchesMax = Math.abs(number - (double) maxHealth) <= EPSILON;
+            if (!matchesHealth && !matchesMax) continue;
+            try {
+                write(data, accessor, value instanceof Double ? Double.valueOf(0.0D) : Float.valueOf(0.0F));
+                hit = true;
+            } catch (RuntimeException ignored) {
+            }
+        }
+        return hit || target.getHealth() <= 0.0F;
+    }
+
+    /**
      * 把实体的生命同步数据直接写为指定值，绕过 setHealth 覆写与 mixin 拦截。
      * 固定使用原版生命 accessor（Float 类型），不做泛化匹配，
      * 避免把数值误写入其他 Double 型同步数据导致类型污染。

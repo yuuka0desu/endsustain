@@ -19,8 +19,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
  * - setHealth：正数写入被改写为 0，回血无入口。
  * - setAbsorptionAmount：正数吸收被改写为 0。
  * - heal：直接取消。
- * - die：清除预置死标志，强制放行死亡主体（正常调用死亡掉落/经验掉落）。
  * - ForgeHooks.onLivingDeath：对标记实体恒返回 false，任何 LivingDeathEvent 取消均无效。
+ * 注意：不再清除 die 的预置死标志——die 由终焉结算链在死亡事务未建立时
+ * 单次调用，重复执行死亡入口会导致演出型实体重复发放掉落。
  */
 @Mixin(value = LivingEntity.class, priority = 2000)
 public abstract class LivingEntityTerminalStateMixin implements TerminalDeathStateAccess {
@@ -57,13 +58,6 @@ public abstract class LivingEntityTerminalStateMixin implements TerminalDeathSta
     @Inject(method = "heal", at = @At("HEAD"), cancellable = true)
     private void endsustain$blockHealing(float amount, CallbackInfo ci) {
         if (endsustain$terminalState()) ci.cancel();
-    }
-
-    @Inject(method = "die", at = @At("HEAD"))
-    private void endsustain$clearDeadFlag(DamageSource source, CallbackInfo ci) {
-        if (endsustain$terminalState()) {
-            this.dead = false;
-        }
     }
 
     @Redirect(method = "dropAllDeathLoot", at = @At(value = "INVOKE", remap = false,

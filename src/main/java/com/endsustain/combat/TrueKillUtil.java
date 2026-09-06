@@ -26,7 +26,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class TrueKillUtil {
     public static final String TERMINAL_STATE_KEY = "EndsustainTerminalState";
     private static final int NATURAL_TICK_DELAY = 1;
-    private static final int FINALIZATION_TIMEOUT = 120;
+    private static final int FINALIZATION_TIMEOUT = 240;
     private static final Map<UUID, PendingDeath> PENDING_DEATHS = new ConcurrentHashMap<>();
     private static final Set<UUID> IN_PROGRESS = ConcurrentHashMap.newKeySet();
 
@@ -172,6 +172,26 @@ public final class TrueKillUtil {
                 continue;
             }
             applyKillCredit(target, pending.attacker);
+            // 看门狗节拍：
+            // - 每 10 tick：管道磨血兜底（合法伤害管道，配合归零锁定净伤稳定）；
+            // - t == 40：再次 GENERIC_KILL 内置退场。
+            pending.ticksElapsed++;
+            if (pending.ticksElapsed % 10 == 0) {
+                try {
+                    DamageSource grind = pending.attacker instanceof ServerPlayer player
+                            ? target.damageSources().playerAttack(player)
+                            : target.damageSources().generic();
+                    target.hurt(grind, 99999.0F);
+                } catch (Throwable ignored) {
+                }
+            }
+            if (pending.ticksElapsed == 40) {
+                try {
+                    target.hurt(target.damageSources().genericKill(),
+                            target.getMaxHealth() * 5.0F + 1.0F);
+                } catch (Throwable ignored) {
+                }
+            }
             if (EndsustainTerminal.retryTick(target, pending.source, pending.attacker)) {
                 iterator.remove();
             }
@@ -195,6 +215,11 @@ public final class TrueKillUtil {
     private static boolean deathTransactionStarted(LivingEntity target) {
         return target instanceof TerminalDeathStateAccess access
                 && access.endsustain$deathTransactionStarted();
+    }
+
+    /** 死亡事务是否已建立（dead 标志已置位）：已建立时不可重复调用 die，避免重复掉落。 */
+    public static boolean isDeathTransactionStarted(LivingEntity target) {
+        return deathTransactionStarted(target);
     }
 
     private static void applyKillCredit(LivingEntity target, LivingEntity attacker) {
