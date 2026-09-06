@@ -26,7 +26,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class TrueKillUtil {
     public static final String TERMINAL_STATE_KEY = "EndsustainTerminalState";
     private static final int NATURAL_TICK_DELAY = 1;
-    private static final int FINALIZATION_TIMEOUT = 240;
+    private static final int FINALIZATION_TIMEOUT = 800;
     private static final Map<UUID, PendingDeath> PENDING_DEATHS = new ConcurrentHashMap<>();
     private static final Set<UUID> IN_PROGRESS = ConcurrentHashMap.newKeySet();
 
@@ -173,11 +173,11 @@ public final class TrueKillUtil {
             }
             applyKillCredit(target, pending.attacker);
             pending.ticksElapsed++;
-            // 伤害泵：目标未进入死亡流程时每 tick 施加无实体来源的 genericKill，
+            // 伤害泵：目标未进入死亡流程时每 tick 施加无实体来源且绕过无敌的虚空伤害，
             // 驱动「须经过伤害事件才启动死亡状态机」的防御；死亡流程启动后停泵避免打断演出。
             if (!target.isDeadOrDying()) {
                 try {
-                    target.hurt(target.damageSources().genericKill(), 1.0F);
+                    target.hurt(target.damageSources().fellOutOfWorld(), 1.0F);
                 } catch (Throwable ignored) {
                 }
             }

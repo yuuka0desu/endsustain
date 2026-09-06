@@ -51,7 +51,10 @@ public final class EndsustainTerminal {
         }
 
         // L0：四层通用无效化（数值生命/上限锁定、字符串校验码生命、字节标志、persistentData 浮点）
-        EntityHealthStateBridge.neutralize(target);
+        boolean neutralized = EntityHealthStateBridge.neutralize(target);
+        com.endsustain.EndSustain.LOGGER.info("[终焉强杀] L0 无效化：目标={}，写入={}，血量={}/{}, dead={}",
+                target.getType(), neutralized, target.getHealth(), target.getMaxHealth(),
+                target.isDeadOrDying());
         if (target.isRemoved()) return;
 
         // L1：管道 hurt（完整受伤链；生命写入由 mixin 强制归零，原版死亡分支触发 die）
