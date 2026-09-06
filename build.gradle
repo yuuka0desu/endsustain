@@ -16,6 +16,8 @@ java.toolchain.languageVersion = JavaLanguageVersion.of(17)
 
 tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
+    // Agent 保险层类依赖 java.instrument 与 jdk.attach 模块
+    options.compilerArgs += ['--add-modules', 'java.instrument,jdk.attach']
 }
 
 mixin {

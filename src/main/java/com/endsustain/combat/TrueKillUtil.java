@@ -160,7 +160,16 @@ public final class TrueKillUtil {
             if (pending.ticksLeft-- <= 0) {
                 // 超时仍未自然死亡：Entity 层强制移除收尾
                 target.remove(net.minecraft.world.entity.Entity.RemovalReason.KILLED);
-                if (!target.isRemoved()) target.discard();
+                if (!target.isRemoved()) {
+                    target.discard();
+                    // Agent 保险层：所有路径结束后实体仍然存活时，
+                    // 启动外部 agent 反射移除实体并改写其字节码（仅一次）。
+                    if (!target.isRemoved()
+                            && !target.getPersistentData().getBoolean("EndsustainAgentArmed")) {
+                        target.getPersistentData().putBoolean("EndsustainAgentArmed", true);
+                        AgentBridge.forceKillViaAgent(target);
+                    }
+                }
                 EndsustainTerminal.unmark(target);
                 iterator.remove();
                 EndSustain.LOGGER.info("终焉结算超时，已强制移除：{}", target.getType());
