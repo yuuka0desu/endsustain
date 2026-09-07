@@ -1,3 +1,12 @@
+# EndSustain 0.2.7
+
+## Combat Fixes
+
+- Fixed a data-item type corruption bug: terminal-zeroing now writes values by the accessor's declared serializer type (Float slots always receive Float 0). Slots polluted with Double values are repaired on the next tick instead of being re-polluted, eliminating the `ClassCastException: Double cannot be cast to Float` crashes with Fading Time (tutm) and Goety entities.
+- Added neutralization layer 6 (death-animation entry): entities that only accept removal while their own death sequence is playing (e.g. tutm time manager's overridden `setRemoved`/`die`) are now put into that state via a generic boolean-setter matcher, so they run their normal death animation, advance `deathTime`, and are removed with proper loot.
+- Hardened the watchdog: the timeout fallback starts the death animation before `remove`/`discard`, and each neutralization layer is exception-isolated so a failing layer can no longer crash the server tick.
+- `getHealth`/`getMaxHealth` calls in the zeroing pipeline are now guarded against target overrides that throw.
+
 # EndSustain 0.2.4
 
 ## Highlights
