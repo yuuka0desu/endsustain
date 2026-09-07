@@ -2,6 +2,7 @@ package com.endsustain.combat;
 
 import com.endsustain.EndSustain;
 import net.minecraft.network.syncher.EntityDataAccessor;
+import net.minecraft.network.syncher.EntityDataSerializers;
 import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.world.entity.LivingEntity;
 
@@ -82,8 +83,13 @@ public final class EntityHealthStateBridge {
             boolean matchesHealth = Math.abs(number - (double) health) <= EPSILON;
             boolean matchesMax = Math.abs(number - (double) maxHealth) <= EPSILON;
             if (!matchesHealth && !matchesMax) continue;
+            // 按 accessor 声明的 serializer 类型写入：
+            // 即使槽内当前值已被污染成 Double（Double 写进 Float 槽），
+            // 也强制写回 Float 0，把槽修复为声明类型，杜绝 ClassCastException。
+            Object zero = zeroValueFor(accessor);
+            if (zero == null) continue;
             try {
-                write(data, accessor, value instanceof Double ? Double.valueOf(0.0D) : Float.valueOf(0.0F));
+                write(data, accessor, zero);
                 hit = true;
             } catch (RuntimeException ignored) {
             }
@@ -297,12 +303,9 @@ public final class EntityHealthStateBridge {
         if (!(previous instanceof Float) && !(previous instanceof Double)) return false;
         if (!sameNumber(previous, target.getHealth())) return false;
 
-        Object zero;
-        if (previous instanceof Double) {
-            zero = Double.valueOf(0.0D);
-        } else {
-            zero = Float.valueOf(0.0F);
-        }
+        // 按 accessor 声明的 serializer 类型写入（与探测写回同理：修复类型污染）。
+        Object zero = zeroValueFor(accessor);
+        if (zero == null) return false;
         try {
             write(data, accessor, zero);
             if (target.getHealth() <= 0.0F) return true;
@@ -315,6 +318,18 @@ public final class EntityHealthStateBridge {
             }
         }
         return false;
+    }
+
+    /**
+     * 按 accessor 声明类型返回归零值：serializer 为 FLOAT 时返回 Float 0，
+     * 为 DOUBLE 时返回 Double 0，其余类型返回 null（跳过）。
+     * 绝不按槽内当前值的运行时类型决定写入类型——槽可能已被其它来源污染。
+     */
+    private static Object zeroValueFor(EntityDataAccessor<?> accessor) {
+        Object serializer = accessor.getSerializer();
+        if (serializer == EntityDataSerializers.FLOAT) return Float.valueOf(0.0F);
+        if (serializer == EntityDataSerializers.DOUBLE) return Double.valueOf(0.0D);
+        return null;
     }
 
     private static boolean matchesCurrentHealth(LivingEntity target, EntityDataAccessor<?> accessor) {
