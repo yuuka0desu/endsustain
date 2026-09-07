@@ -10,6 +10,7 @@
     "ServerChunkCacheMixin",
     "TidalHookEntityMixin",
     "LivingEntityTerminalStateMixin",
+    "SynchedEntityDataMixin",
     "ServerLevelTimeStopMixin",
     "ServerGamePacketTimeStopMixin"
   ],
