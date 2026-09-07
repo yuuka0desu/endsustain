@@ -182,12 +182,21 @@ public final class EntityHealthStateBridge {
     /**
      * 无效化层 5：反向找生命值字段。
      * 从 getHealth() 的返回值反向匹配：扫描目标类继承链上全部非静态
-     * Float/Double 实例字段，值 ≈ 当前生命 或 ≈ 最大生命 → 直接写 0。
+     * Float 实例字段（基本 float 与包装 Float），值 ≈ 当前生命 或 ≈ 最大生命 → 写 0。
+     * 不触碰 double/Double 字段：部分实体内部对 Double 字段做 Float 强转，
+     * 归零会破坏其不变量并触发 ClassCastException。
      * 覆盖「生命存储在实例字段（而非数据项）」的实体。
      */
     public static boolean zeroInstanceHealthFields(LivingEntity target) {
-        float health = target.getHealth();
-        float maxHealth = target.getMaxHealth();
+        float health;
+        float maxHealth;
+        try {
+            health = target.getHealth();
+            maxHealth = target.getMaxHealth();
+        } catch (Throwable t) {
+            // 目标覆写的 getHealth/getMaxHealth 自身异常时，跳过本层（由其它层兜底）
+            return false;
+        }
         boolean hit = false;
         for (Class<?> type = target.getClass();
              type != null && LivingEntity.class.isAssignableFrom(type);
@@ -195,8 +204,7 @@ public final class EntityHealthStateBridge {
             for (Field field : type.getDeclaredFields()) {
                 if (Modifier.isStatic(field.getModifiers())) continue;
                 Class<?> fieldType = field.getType();
-                if (fieldType != float.class && fieldType != double.class
-                        && fieldType != Float.class && fieldType != Double.class) continue;
+                if (fieldType != float.class && fieldType != Float.class) continue;
                 try {
                     field.setAccessible(true);
                     Object value = field.get(target);
@@ -205,11 +213,7 @@ public final class EntityHealthStateBridge {
                     boolean matchHealth = Math.abs(v - (double) health) <= EPSILON;
                     boolean matchMax = Math.abs(v - (double) maxHealth) <= EPSILON;
                     if (!matchHealth && !matchMax) continue;
-                    if (fieldType == double.class || fieldType == Double.class) {
-                        field.set(target, 0.0D);
-                    } else {
-                        field.set(target, 0.0F);
-                    }
+                    field.set(target, 0.0F);
                     hit = true;
                 } catch (Throwable ignored) {
                 }
@@ -219,14 +223,31 @@ public final class EntityHealthStateBridge {
     }
 
     /**
-     * 通用无效化：对目标执行全部五层归零，返回是否有任何写入发生。
+     * 通用无效化：对目标执行全部五层归零（各层异常隔离，单层失败不影响其它层），
+     * 返回是否有任何写入发生。
      */
     public static boolean neutralize(LivingEntity target) {
-        boolean hit = lockHealthAndCapToZero(target);
-        hit |= zeroStringCodedHealth(target);
-        hit |= zeroByteFlags(target);
-        hit |= zeroPersistentFloats(target);
-        hit |= zeroInstanceHealthFields(target);
+        boolean hit = false;
+        try {
+            hit |= lockHealthAndCapToZero(target);
+        } catch (Throwable ignored) {
+        }
+        try {
+            hit |= zeroStringCodedHealth(target);
+        } catch (Throwable ignored) {
+        }
+        try {
+            hit |= zeroByteFlags(target);
+        } catch (Throwable ignored) {
+        }
+        try {
+            hit |= zeroPersistentFloats(target);
+        } catch (Throwable ignored) {
+        }
+        try {
+            hit |= zeroInstanceHealthFields(target);
+        } catch (Throwable ignored) {
+        }
         return hit;
     }
 
