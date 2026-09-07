@@ -26,17 +26,17 @@ public abstract class SynchedEntityDataMixin {
     private Entity f_135344_;
 
     @ModifyVariable(method = "m_135381_", at = @At("HEAD"), argsOnly = true, index = 1)
-    private <T> T endsustain$zeroNumericWrites(T value) {
+    private Object endsustain$zeroNumericWrites(Object value) {
         if (!(f_135344_ instanceof LivingEntity living)) return value;
         if (!living.getPersistentData().getBoolean(EndsustainTerminal.TERMINAL_KEY)
                 || !living.getPersistentData().getBoolean(EndsustainTerminal.HEALTH_HIJACK_KEY)) {
             return value;
         }
         if (value instanceof Double d && d > 0.0D) {
-            return (T) Double.valueOf(0.0D);
+            return Double.valueOf(0.0D);
         }
         if (value instanceof Float f && f > 0.0F) {
-            return (T) Float.valueOf(0.0F);
+            return Float.valueOf(0.0F);
         }
         return value;
     }
