@@ -15,6 +15,8 @@ import net.minecraft.world.entity.LivingEntity;
  */
 public final class EndsustainTerminal {
     public static final String TERMINAL_KEY = "EndsustainTerminalState";
+    /** getHealth 劫持开关：neutralize 完成后启用，mixin 令 getHealth 恒返回 0。 */
+    public static final String HEALTH_HIJACK_KEY = "EndsustainHealthHijacked";
 
     private EndsustainTerminal() {}
 
@@ -29,6 +31,7 @@ public final class EndsustainTerminal {
 
     public static void unmark(LivingEntity target) {
         target.getPersistentData().remove(TERMINAL_KEY);
+        target.getPersistentData().remove(HEALTH_HIJACK_KEY);
     }
 
     /**
@@ -57,6 +60,11 @@ public final class EndsustainTerminal {
                 target.isDeadOrDying());
         KillChainMonitor.logTargetState("L0", target, "neutralize写入=" + neutralized);
         if (target.isRemoved()) return;
+
+        // 五层归零完成后启用 getHealth 劫持：mixin 令 getHealth 恒返回 0，
+        // 实体的回滚/回血逻辑读到的生命恒为 0，死亡状态机必然接管。
+        target.getPersistentData().putBoolean(HEALTH_HIJACK_KEY, true);
+        KillChainMonitor.log("HIJACK_ON getHealth 劫持启用");
 
         // L1：管道 hurt（完整受伤链；生命写入由 mixin 强制归零，原版死亡分支触发 die）
         try {

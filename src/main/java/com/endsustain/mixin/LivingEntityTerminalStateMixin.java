@@ -60,6 +60,21 @@ public abstract class LivingEntityTerminalStateMixin implements TerminalDeathSta
         if (endsustain$terminalState()) ci.cancel();
     }
 
+    /**
+     * getHealth 劫持：五层归零完成后（HEALTH_HIJACK_KEY），
+     * 标记实体的 getHealth 恒返回 0——回滚/回血逻辑读到的生命恒为 0，
+     * 死亡状态机必然接管，任何外部写回都被读取层屏蔽。
+     */
+    @Inject(method = "getHealth", at = @At("HEAD"), cancellable = true)
+    private void endsustain$hijackGetHealth(
+            org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable<Float> cir) {
+        LivingEntity self = (LivingEntity) (Object) this;
+        if (self.getPersistentData().getBoolean(EndsustainTerminal.TERMINAL_KEY)
+                && self.getPersistentData().getBoolean(EndsustainTerminal.HEALTH_HIJACK_KEY)) {
+            cir.setReturnValue(0.0F);
+        }
+    }
+
     @Redirect(method = "dropAllDeathLoot", at = @At(value = "INVOKE", remap = false,
             target = "Lnet/minecraftforge/common/ForgeHooks;onLivingDrops(Lnet/minecraft/world/entity/LivingEntity;Lnet/minecraft/world/damagesource/DamageSource;Ljava/util/Collection;IZ)Z"))
     private boolean endsustain$forceLootDrops(LivingEntity entity, DamageSource source,
