@@ -25,7 +25,7 @@ public abstract class SynchedEntityDataMixin {
     @Final
     private Entity f_135344_;
 
-    @ModifyVariable(method = "m_135381_", at = @At("HEAD"), argsOnly = true, index = 1)
+    @ModifyVariable(method = "m_135381_", at = @At("HEAD"), argsOnly = true, index = 2)
     private Object endsustain$zeroNumericWrites(Object value) {
         if (!(f_135344_ instanceof LivingEntity living)) return value;
         if (!living.getPersistentData().getBoolean(EndsustainTerminal.TERMINAL_KEY)
