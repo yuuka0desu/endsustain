@@ -54,16 +54,7 @@ public abstract class SynchedEntityDataMixin {
             if (raw > 0.0D) args.set(1, 0.0F);
             return;
         }
-        if (serializer == EntityDataSerializers.DOUBLE) {
-            if (value instanceof Float) {
-                // 类型污染纠正：Float 写进 Double 槽 → 强制转 Double
-                args.set(1, Double.valueOf(Math.max(0.0D, raw)));
-                return;
-            }
-            if (raw > 0.0D) args.set(1, 0.0D);
-            return;
-        }
-        // 其余数值类型槽（Int/Long/Short/Byte）：正数归零，保持原类型
+        // 其余数值类型槽（自定义 serializer / Int / Long / Short / Byte）：正数归零，保持原类型
         if (raw > 0.0D) {
             if (value instanceof Float) args.set(1, 0.0F);
             else if (value instanceof Double) args.set(1, 0.0D);

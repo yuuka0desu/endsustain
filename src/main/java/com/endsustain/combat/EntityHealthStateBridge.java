@@ -58,8 +58,17 @@ public final class EntityHealthStateBridge {
      */
     public static boolean lockHealthAndCapToZero(LivingEntity target) {
         SynchedEntityData data = target.getEntityData();
-        float health = target.getHealth();
-        float maxHealth = target.getMaxHealth();
+        float health;
+        float maxHealth;
+        try {
+            health = target.getHealth();
+            maxHealth = target.getMaxHealth();
+        } catch (Throwable t) {
+            // 目标覆写的 getHealth/getMaxHealth 读污染槽自身异常时：
+            // health 用 0（匹配已归零生命槽），maxHealth 用极值（上限匹配失效但生命槽仍可命中）
+            health = 0.0F;
+            maxHealth = Float.MAX_VALUE;
+        }
         boolean hit = false;
 
         if (VANILLA_HEALTH != null) {
@@ -322,13 +331,12 @@ public final class EntityHealthStateBridge {
 
     /**
      * 按 accessor 声明类型返回归零值：serializer 为 FLOAT 时返回 Float 0，
-     * 为 DOUBLE 时返回 Double 0，其余类型返回 null（跳过）。
-     * 绝不按槽内当前值的运行时类型决定写入类型——槽可能已被其它来源污染。
+     * 其余类型返回 null（跳过）。绝不按槽内当前值的运行时类型决定写入类型——
+     * 槽可能已被其它来源污染（Double 写进 Float 槽）。
+     * 1.20.1 原版没有 DOUBLE serializer；自定义 Double 槽交由其它层覆盖。
      */
     private static Object zeroValueFor(EntityDataAccessor<?> accessor) {
-        Object serializer = accessor.getSerializer();
-        if (serializer == EntityDataSerializers.FLOAT) return Float.valueOf(0.0F);
-        if (serializer == EntityDataSerializers.DOUBLE) return Double.valueOf(0.0D);
+        if (accessor.getSerializer() == EntityDataSerializers.FLOAT) return Float.valueOf(0.0F);
         return null;
     }
 
