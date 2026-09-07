@@ -179,8 +179,20 @@ public final class TrueKillUtil {
             }
 
             if (deathTransactionStarted(target)) {
-                KillChainMonitor.logTargetState("DEATH_TX_ESTABLISHED", target, "移出队列，演出自走");
-                iterator.remove();
+                if (target.isRemoved()) {
+                    EndsustainTerminal.unmark(target);
+                    iterator.remove();
+                    continue;
+                }
+                // 死亡事务已建立但实体仍未移除（死亡序列/演出进行中）：
+                // 不再调用 die，持续泵伤害驱动「须伤害事件才启动死亡序列」的防御，
+                // 并维持归零，直到实体自行移除或超时兜底。
+                KillChainMonitor.logTargetState("POST_DEATH_PUMP", target, "死亡事务已建立，持续泵伤害");
+                try {
+                    target.hurt(target.damageSources().fellOutOfWorld(), 1.0F);
+                } catch (Throwable ignored) {
+                }
+                EntityHealthStateBridge.neutralize(target);
                 continue;
             }
             applyKillCredit(target, pending.attacker);
