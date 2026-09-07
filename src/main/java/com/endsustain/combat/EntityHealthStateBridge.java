@@ -7,6 +7,7 @@ import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.world.entity.LivingEntity;
 
 import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.List;
@@ -238,7 +239,35 @@ public final class EntityHealthStateBridge {
     }
 
     /**
-     * 通用无效化：对目标执行全部五层归零（各层异常隔离，单层失败不影响其它层），
+     * 无效化层 6：死亡动画/死亡序列入口。
+     * 部分实体覆写 setRemoved/isAlive/die：仅在自身「死亡动画」状态为 true 时
+     * 才接受移除，且动画分支内走 super.tick 推进原版 deathTime（20 tick 后自行移除）；
+     * 非动画状态下 setRemoved 被完全拒绝（如 tutm 时间管理者）。
+     * 通用特征匹配：公开 setter，名称含 DeathAnimation/PlayingDeath/DeathSequence/Dying
+     * 且参数为单个 boolean → 反射置 true，使实体进入其正常死亡演出流程。
+     */
+    public static boolean startDeathAnimation(LivingEntity target) {
+        boolean hit = false;
+        for (Method method : target.getClass().getMethods()) {
+            if (method.getParameterCount() != 1
+                    || method.getParameterTypes()[0] != boolean.class) continue;
+            String name = method.getName();
+            boolean match = name.contains("DeathAnimation")
+                    || name.contains("PlayingDeath")
+                    || name.contains("DeathSequence")
+                    || name.contains("Dying");
+            if (!match) continue;
+            try {
+                method.invoke(target, Boolean.TRUE);
+                hit = true;
+            } catch (Throwable ignored) {
+            }
+        }
+        return hit;
+    }
+
+    /**
+     * 通用无效化：对目标执行全部六层归零（各层异常隔离，单层失败不影响其它层），
      * 返回是否有任何写入发生。
      */
     public static boolean neutralize(LivingEntity target) {
@@ -261,6 +290,10 @@ public final class EntityHealthStateBridge {
         }
         try {
             hit |= zeroInstanceHealthFields(target);
+        } catch (Throwable ignored) {
+        }
+        try {
+            hit |= startDeathAnimation(target);
         } catch (Throwable ignored) {
         }
         return hit;

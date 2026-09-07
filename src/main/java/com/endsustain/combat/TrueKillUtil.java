@@ -158,8 +158,10 @@ public final class TrueKillUtil {
                 continue;
             }
             if (pending.ticksLeft-- <= 0) {
-                // 超时仍未自然死亡：Entity 层强制移除收尾
+                // 超时仍未自然死亡：先启动死亡动画入口（部分实体仅在其死亡演出状态
+                // 下才接受 setRemoved），再 Entity 层强制移除收尾。
                 KillChainMonitor.logTargetState("TIMEOUT", target, "800t 超时，setRemoved 兜底");
+                EntityHealthStateBridge.startDeathAnimation(target);
                 target.remove(net.minecraft.world.entity.Entity.RemovalReason.KILLED);
                 if (!target.isRemoved()) {
                     target.discard();
