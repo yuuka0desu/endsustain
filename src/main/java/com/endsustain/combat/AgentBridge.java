@@ -26,7 +26,7 @@ public final class AgentBridge {
     private AgentBridge() {
     }
 
-    /** 启动外部 agent 保险层（异步）。 */
+    /** 启动外部 agent 保险层（异步）。dump/破壳输出重定向到游戏 logs/endsustain-agent.log。 */
     public static void forceKillViaAgent(LivingEntity target) {
         try {
             Path jar = ensureAgentJar();
@@ -37,11 +37,16 @@ public final class AgentBridge {
             }
             String javaBin = System.getProperty("java.home") + "/bin/java";
             String internalName = target.getClass().getName();
-            new ProcessBuilder(javaBin, "-cp", jar.toString(),
+            ProcessBuilder builder = new ProcessBuilder(javaBin, "-cp", jar.toString(),
                     "com.endsustain.agent.Attacher", pid, jar.toString(), internalName)
-                    .redirectErrorStream(true)
-                    .redirectOutput(ProcessBuilder.Redirect.DISCARD)
-                    .start();
+                    .redirectErrorStream(true);
+            try {
+                builder.redirectOutput(ProcessBuilder.Redirect.appendTo(
+                        Path.of("logs", "endsustain-agent.log").toFile()));
+            } catch (Throwable ignored) {
+                builder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
+            }
+            builder.start();
             EndSustain.LOGGER.warn("[终焉强杀] Agent 保险层已启动：pid={}，目标类={}",
                     pid, internalName);
         } catch (Throwable t) {
