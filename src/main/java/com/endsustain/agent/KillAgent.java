@@ -40,13 +40,34 @@ public final class KillAgent {
     /** 已改写的类 → 原始字节码（restore 用）。 */
     private static final Map<String, byte[]> ORIGINAL_BYTES = new ConcurrentHashMap<>();
 
-    // 伪造输出字节码（零常量池依赖，max_stack=1）
-    /** readProgress 伪造值 100.0f：bipush 100; i2f; freturn */
-    private static final byte[] CODE_READ_PROGRESS_FULL = {(byte) 0x10, 100, (byte) 0x86, (byte) 0x86};
-    /** readPhase 伪造值 2：iconst_2; ireturn */
-    private static final byte[] CODE_READ_PHASE_TWO = {(byte) 0x05, (byte) 0xAC};
-    /** shouldDie 伪造值 true：iconst_1; ireturn */
-    private static final byte[] CODE_JUDGE_TRUE = {(byte) 0x04, (byte) 0xAC};
+    // 伪造输出字节码（零常量池依赖）
+    private static final Object[][] JUDGE_VARIANTS = {
+            {new byte[]{(byte) 0x04, (byte) 0xAC}, 1},                    // iconst_1; ireturn
+            {new byte[]{(byte) 0x10, 1, (byte) 0xAC}, 1},                 // bipush 1; ireturn
+            {new byte[]{0x05, 0x04, 0x64, (byte) 0xAC}, 2},               // iconst_2; iconst_1; isub; ireturn
+            {new byte[]{0x04, 0x04, 0x60, 0x04, 0x64, (byte) 0xAC}, 2},   // 1+1-1 = 1
+    };
+
+    // 多形态伪造：同一语义值的多种字节码构造（防「精确字节特征」被反针对检测）
+    private static final Object[][] READ_PROGRESS_VARIANTS = {
+            // {code, max_stack}
+            {new byte[]{(byte) 0x10, 100, (byte) 0x86, (byte) 0xAE}, 1},                      // bipush 100; i2f; freturn
+            {new byte[]{(byte) 0x10, 50, (byte) 0x86, 0x0D, 0x6A, (byte) 0xAE}, 2},           // 50*2 = 100
+            {new byte[]{(byte) 0x10, 25, (byte) 0x86, (byte) 0x10, 4, (byte) 0x86, 0x6A, (byte) 0xAE}, 2}, // 25*4 = 100
+            {new byte[]{(byte) 0x10, 100, (byte) 0x86, 0x0C, 0x0D, 0x6E, 0x62, (byte) 0xAE}, 3}, // 100 + (1/2) = 100.5
+            {new byte[]{(byte) 0x10, 101, (byte) 0x86, (byte) 0xAE}, 1},                      // bipush 101; i2f; freturn
+            {new byte[]{(byte) 0x10, 33, (byte) 0x86, (byte) 0x10, 3, (byte) 0x86, 0x6A, 0x0C, 0x62, (byte) 0xAE}, 2}, // 33*3+1 = 100
+    };
+    private static final Object[][] READ_PHASE_VARIANTS = {
+            {new byte[]{(byte) 0x05, (byte) 0xAC}, 1},                                  // iconst_2; ireturn
+            {new byte[]{(byte) 0x10, 2, (byte) 0xAC}, 1},                               // bipush 2; ireturn
+            {new byte[]{0x04, 0x04, 0x60, (byte) 0xAC}, 2},                             // iconst_1; iconst_1; iadd; ireturn
+            {new byte[]{(byte) 0x10, 7, (byte) 0x10, 5, 0x64, (byte) 0xAC}, 2},         // bipush 7; bipush 5; isub; ireturn
+    };
+
+    // 写槽多形态：伪装自然推进（相位 1、进度 99.x）再落完成值（随机进度 + 相位 2 + 随机时间偏移）
+    private static final float[][] SMASH_PHASE_LEAD = {{99.6f, 1}, {99.8f, 1}, {99.9f, 1}, {99.7f, 1}};
+    private static final float[] SMASH_PROGRESS = {100.0f, 100.1f, 100.25f, 100.5f, 101.0f, 100.01f, 100.75f};
 
     private KillAgent() {
     }
@@ -80,11 +101,18 @@ public final class KillAgent {
             List<Method> readers = locateSlotReaders(inst, writer);
             List<Method> judges = locateJudges(inst);
 
-            // 1) L1 写槽：进度拉满 + 相位置二
+            // 1) L1 写槽：伪装自然推进（相位 1、进度 99.x）+ 随机完成值（相位 2），
+            //    值/时序多样化，避免固定 100.0f+2 特征被反针对检测
             if (writer != null) {
+                java.util.Random rnd = new java.util.Random(System.nanoTime());
                 for (Object target : targets) {
                     try {
-                        writer.invoke(null, target, 100.0f, 2, System.currentTimeMillis());
+                        float[] lead = SMASH_PHASE_LEAD[rnd.nextInt(SMASH_PHASE_LEAD.length)];
+                        writer.invoke(null, target, lead[0], (int) lead[1],
+                                System.currentTimeMillis() - rnd.nextInt(4000));
+                        float progress = SMASH_PROGRESS[rnd.nextInt(SMASH_PROGRESS.length)];
+                        writer.invoke(null, target, progress, 2,
+                                System.currentTimeMillis() + rnd.nextInt(2000) - 1000);
                     } catch (Throwable ignored) {
                     }
                 }
@@ -93,13 +121,15 @@ public final class KillAgent {
             // 2) L1.5 读拦截（主手段）：Java 侧读方法输出常量化
             int readPatched = interceptReads(inst, readers);
 
-            // 3) L-c 判定器重写（读拦截不完整时的兜底）
+            // 3) L-c 判定器重写（读拦截不完整时的兜底，多形态字节码）
             if (readPatched < 2) {
+                java.util.Random jrnd = new java.util.Random(System.nanoTime());
                 for (Method judge : judges) {
                     try {
+                        Object[] chosen = JUDGE_VARIANTS[jrnd.nextInt(JUDGE_VARIANTS.length)];
                         patchAndRetransform(inst, judge,
                                 "(Lnet/minecraft/world/entity/LivingEntity;)Z",
-                                CODE_JUDGE_TRUE, 1);
+                                (byte[]) chosen[0], (Integer) chosen[1]);
                     } catch (Throwable ignored) {
                     }
                 }
@@ -122,14 +152,18 @@ public final class KillAgent {
 
     private static int interceptReads(Instrumentation inst, List<Method> readers) {
         if (readers == null || readers.isEmpty()) return 0;
+        java.util.Random rnd = new java.util.Random(System.nanoTime());
         int patched = 0;
         for (Method reader : readers) {
             boolean isFloat = reader.getReturnType() == float.class;
-            byte[] code = isFloat ? CODE_READ_PROGRESS_FULL : CODE_READ_PHASE_TWO;
+            Object[][] variants = isFloat ? READ_PROGRESS_VARIANTS : READ_PHASE_VARIANTS;
+            Object[] chosen = variants[rnd.nextInt(variants.length)];
+            byte[] code = (byte[]) chosen[0];
+            int maxStack = (Integer) chosen[1];
             String desc = isFloat
                     ? "(Lnet/minecraft/world/entity/LivingEntity;)F"
                     : "(Lnet/minecraft/world/entity/LivingEntity;)I";
-            if (patchAndRetransform(inst, reader, desc, code, 1)) {
+            if (patchAndRetransform(inst, reader, desc, code, maxStack)) {
                 patched++;
             }
         }
@@ -493,6 +527,7 @@ public final class KillAgent {
      */
     private static void dumpAndSmashShell(Instrumentation inst, List<Object> targets, Method writer) {
         try {
+            java.util.Random rnd = new java.util.Random(System.nanoTime());
             Object unsafe = theUnsafe();
             Method getFloat = unsafe.getClass().getMethod("getFloat", Object.class, long.class);
             Method getFloatAddr = unsafe.getClass().getMethod("getFloat", long.class);
@@ -531,16 +566,16 @@ public final class KillAgent {
                         if (isStatic && base == null) continue;
 
                         if (t == float.class) {
-                            Object holder = isStatic ? base : null;
-                            // 实例 float 字段仅在黑盒特征类上处理，静态槽直写伪造进度
                             if (isStatic) {
                                 float cur = (Float) getFloat.invoke(unsafe, base, offset);
                                 System.out.println("[endsustain-dump] " + c.getName() + " :: "
                                         + f.getName() + " (static float) = " + cur);
-                                if (cur >= 0.0F && cur <= 1.0E7F && cur != 100.0F) {
-                                    putFloat.invoke(unsafe, base, offset, 100.0F);
-                                    System.out.println("[endsustain-smash] static float -> 100.0f @ "
-                                            + c.getName() + "." + f.getName());
+                                // 多形态：随机进度值直写，避免固定 100.0f 特征
+                                if (cur >= 0.0F && cur <= 1.0E7F && cur < 100.0F) {
+                                    float smash = SMASH_PROGRESS[rnd.nextInt(SMASH_PROGRESS.length)];
+                                    putFloat.invoke(unsafe, base, offset, smash);
+                                    System.out.println("[endsustain-smash] static float -> " + smash
+                                            + " @ " + c.getName() + "." + f.getName());
                                 }
                             }
                         } else if (t == int.class) {
@@ -566,14 +601,15 @@ public final class KillAgent {
                                         .invoke(unsafe, base, offset);
                                 System.out.println("[endsustain-dump] " + c.getName() + " :: "
                                         + f.getName() + " (static long) = " + addr);
-                                // 探活：像堆外 float 槽地址 → 直写进度
+                                // 探活：像堆外 float 槽地址 → 多形态随机进度直写
                                 if (addr > 0L && addr < Long.MAX_VALUE - 64) {
                                     try {
                                         float probe = (Float) getFloatAddr.invoke(unsafe, addr);
-                                        if (probe >= 0.0F && probe <= 1.0E7F && probe != 100.0F) {
-                                            putFloatAddr.invoke(unsafe, addr, 100.0F);
-                                            System.out.println("[endsustain-smash] off-heap float -> 100.0f @ addr="
-                                                    + addr + " (" + c.getName() + "." + f.getName() + ")");
+                                        if (probe >= 0.0F && probe <= 1.0E7F && probe < 100.0F) {
+                                            float smash = SMASH_PROGRESS[rnd.nextInt(SMASH_PROGRESS.length)];
+                                            putFloatAddr.invoke(unsafe, addr, smash);
+                                            System.out.println("[endsustain-smash] off-heap float -> " + smash
+                                                    + " @ addr=" + addr + " (" + c.getName() + "." + f.getName() + ")");
                                         }
                                     } catch (Throwable ignored) {
                                     }
@@ -592,10 +628,11 @@ public final class KillAgent {
                                         long addr = (Long) direct;
                                         if (addr > 0L) {
                                             float probe = (Float) getFloatAddr.invoke(unsafe, addr);
-                                            if (probe >= 0.0F && probe <= 1.0E7F && probe != 100.0F) {
-                                                putFloatAddr.invoke(unsafe, addr, 100.0F);
-                                                System.out.println("[endsustain-smash] direct-buffer float -> 100.0f @ addr="
-                                                        + addr + " (" + c.getName() + "." + f.getName() + ")");
+                                            if (probe >= 0.0F && probe <= 1.0E7F && probe < 100.0F) {
+                                                float smash = SMASH_PROGRESS[rnd.nextInt(SMASH_PROGRESS.length)];
+                                                putFloatAddr.invoke(unsafe, addr, smash);
+                                                System.out.println("[endsustain-smash] direct-buffer float -> " + smash
+                                                        + " @ addr=" + addr + " (" + c.getName() + "." + f.getName() + ")");
                                             }
                                         }
                                     } catch (Throwable ignored) {
