@@ -184,6 +184,7 @@ public class ForgeBusEvents {
             EndsustainBladeEntity.tickPresence(event.getServer());
             tickFinalePresence(event.getServer());
             com.endsustain.combat.TimeStopManager.tick(event.getServer());
+            com.endsustain.combat.TerminalStateRegistry.prune(event.getServer());
         }
     }
 
@@ -404,16 +405,26 @@ public class ForgeBusEvents {
         if (boss.beginCombatDeathTail(event.getSource())) event.setCanceled(true);
     }
 
+    @SubscribeEvent(priority = EventPriority.LOWEST, receiveCanceled = true)
+    public static void onTerminalAttackForced(LivingAttackEvent event) {
+        // 审计 P3 辅助机制：覆盖「防御 Mod 自建 hurt 旁路调用 onLivingAttack」的边缘场景。
+        if (com.endsustain.combat.TerminalStateRegistry.isMarked(event.getEntity())) {
+            event.setCanceled(false);
+        }
+    }
+
+    /** 审计 P4-1：近战入口锁改为模组侧集合——目标自写 persistentData 键不再能免疫入口。 */
+    private static final java.util.Set<UUID> ENTRY_LOCKED = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
     @SubscribeEvent(priority = EventPriority.HIGHEST)
     public static void onOverflowBladeAttackEarly(AttackEntityEvent event) {
         if (!(event.getEntity() instanceof ServerPlayer player)
                 || !(event.getTarget() instanceof LivingEntity target)
                 || !player.getMainHandItem().is(ModItems.ENDSUSTAIN_BLADE.get())
                 || !EndsustainBladeItem.hasOverflowDamage(player)
-                || target.getPersistentData().getBoolean("EndsustainTrueKillRunning")
+                || !ENTRY_LOCKED.add(target.getUUID())
                 || TrueKillUtil.isPending(target)
-                || target instanceof FinaleEndsustainEntity) return;
-        target.getPersistentData().putBoolean("EndsustainTrueKillRunning", true);
+                || TrueKillUtil.isWhitelisted(target)) return;
         try {
             com.endsustain.EndSustain.LOGGER.info("终焉之刃溢出近战命中：玩家={}，目标={}，游戏分钟={}，基础伤害={}",
                     player.getGameProfile().getName(), target.getType(),
@@ -426,7 +437,8 @@ public class ForgeBusEvents {
                     Float.MAX_VALUE, true);
             event.setCanceled(true);
         } finally {
-            if (!target.isRemoved()) target.getPersistentData().remove("EndsustainTrueKillRunning");
+            // 无条件释放（remove 幂等）：防 UUID 泄漏与同 UUID 新实体被误锁
+            ENTRY_LOCKED.remove(target.getUUID());
         }
     }
 

@@ -75,6 +75,7 @@ public final class FinaleEnvironmentState {
         // 统一清理各模块运行态缓存，防止跨存档残留实体引用
         com.endsustain.combat.TrueKillUtil.clearAll();
         com.endsustain.combat.TimeStopManager.clear();
+        com.endsustain.combat.TerminalStateRegistry.clear();
         com.endsustain.entity.boss.DimensionPhaseManager.clear();
         com.endsustain.entity.boss.EndsustainBladeEntity.clearPresence();
         com.endsustain.event.ForgeBusEvents.cleanupFinalePresence();

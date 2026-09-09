@@ -1,6 +1,5 @@
 package com.endsustain.mixin;
 
-import com.endsustain.combat.EndsustainTerminal;
 import net.minecraft.network.syncher.SynchedEntityData;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
@@ -29,8 +28,9 @@ public abstract class SynchedEntityDataMixin {
     @ModifyVariable(method = "m_135381_", at = @At("HEAD"), argsOnly = true, index = 2)
     private Object endsustain$zeroNumericWrites(Object value) {
         if (!(f_135344_ instanceof LivingEntity living)) return value;
-        if (!living.getPersistentData().getBoolean(EndsustainTerminal.TERMINAL_KEY)
-                || !living.getPersistentData().getBoolean(EndsustainTerminal.HEALTH_HIJACK_KEY)) {
+        // 权威判定在模组私有表：目标 remove persistentData 键无法拆除本拦截
+        if (!com.endsustain.combat.TerminalStateRegistry.isMarked(living)
+                || !com.endsustain.combat.TerminalStateRegistry.isHijacked(living)) {
             return value;
         }
         if (value instanceof Double d && d > 0.0D) {

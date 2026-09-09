@@ -18,6 +18,10 @@ import java.util.concurrent.TimeUnit;
  */
 public final class KillChainMonitor {
     private static final int QUEUE_CAPACITY = 20000;
+    /** 审计 6.8-1：单文件大小上限 4MB，滚动保留 1 份旧文件，防磁盘打满。 */
+    private static final long MAX_LOG_SIZE = 4L * 1024 * 1024;
+    private static final Path LOG_FILE = Path.of("logs", "endsustain-killchain.log");
+    private static final Path LOG_FILE_OLD = Path.of("logs", "endsustain-killchain.log.1");
     private static final BlockingQueue<String> QUEUE = new LinkedBlockingQueue<>(QUEUE_CAPACITY);
     private static volatile boolean started;
 
@@ -29,26 +33,57 @@ public final class KillChainMonitor {
         if (started) return;
         started = true;
         Thread thread = new Thread(() -> {
-            Path logFile = Path.of("logs", "endsustain-killchain.log");
             try {
-                if (!Files.exists(logFile.getParent())) {
-                    Files.createDirectories(logFile.getParent());
+                if (!Files.exists(LOG_FILE.getParent())) {
+                    Files.createDirectories(LOG_FILE.getParent());
                 }
             } catch (Throwable ignored) {
             }
-            try (PrintWriter writer = new PrintWriter(Files.newBufferedWriter(logFile,
-                    StandardCharsets.UTF_8,
-                    StandardOpenOption.CREATE, StandardOpenOption.APPEND), true)) {
+            PrintWriter writer = openWriter();
+            long written = 0L;
+            try {
                 while (started) {
                     String event = QUEUE.poll(1, TimeUnit.SECONDS);
                     if (event == null) continue;
-                    writer.println(System.currentTimeMillis() + " " + event);
+                    String line = System.currentTimeMillis() + " " + event;
+                    writer.println(line);
+                    written += line.length() + 2;
+                    if (written >= MAX_LOG_SIZE) {
+                        writer.flush();
+                        writer.close();
+                        rotate();
+                        writer = openWriter();
+                        written = 0L;
+                    }
                 }
             } catch (Throwable ignored) {
+            } finally {
+                try {
+                    writer.close();
+                } catch (Throwable ignored) {
+                }
             }
         }, "endsustain-killchain-monitor");
         thread.setDaemon(true);
         thread.start();
+    }
+
+    private static PrintWriter openWriter() {
+        try {
+            return new PrintWriter(Files.newBufferedWriter(LOG_FILE,
+                    StandardCharsets.UTF_8,
+                    StandardOpenOption.CREATE, StandardOpenOption.APPEND), true);
+        } catch (Throwable t) {
+            return new PrintWriter(System.out, true);
+        }
+    }
+
+    private static void rotate() {
+        try {
+            Files.deleteIfExists(LOG_FILE_OLD);
+            Files.move(LOG_FILE, LOG_FILE_OLD);
+        } catch (Throwable ignored) {
+        }
     }
 
     /** 提交一条监听事件（非阻塞，线程安全）。 */

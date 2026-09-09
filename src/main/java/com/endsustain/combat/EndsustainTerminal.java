@@ -22,14 +22,17 @@ public final class EndsustainTerminal {
 
     /** 给目标打上终焉标记：此后任何回血/正数生命写入都会被本模组 mixin 拦截。 */
     public static void mark(LivingEntity target) {
+        // 权威判定在模组私有表（TerminalStateRegistry）；persistentData 键仅作影子/诊断
+        TerminalStateRegistry.mark(target);
         target.getPersistentData().putBoolean(TERMINAL_KEY, true);
     }
 
     public static boolean isMarked(LivingEntity target) {
-        return target.getPersistentData().getBoolean(TERMINAL_KEY);
+        return TerminalStateRegistry.isMarked(target);
     }
 
     public static void unmark(LivingEntity target) {
+        TerminalStateRegistry.unmark(target.getUUID());
         target.getPersistentData().remove(TERMINAL_KEY);
         target.getPersistentData().remove(HEALTH_HIJACK_KEY);
     }
@@ -48,7 +51,9 @@ public final class EndsustainTerminal {
 
         // 蘸酱 Boss 有独立的死亡尾流程（星辰矢反杀 + finalize 掉落），
         // 不可进入强制移除队列，否则死亡尾会被提前掐断、掉落丢失。
-        if (target instanceof com.endsustain.entity.boss.FinaleEndsustainEntity boss) {
+        // 白名单双校验：注册名命名空间非 endsustain 的伪装实体不走豁免分支。
+        if (target instanceof com.endsustain.entity.boss.FinaleEndsustainEntity boss
+                && TrueKillUtil.isWhitelisted(boss)) {
             boss.beginCombatDeathTail(source);
             return;
         }
@@ -63,6 +68,7 @@ public final class EndsustainTerminal {
 
         // 五层归零完成后启用 getHealth 劫持：mixin 令 getHealth 恒返回 0，
         // 实体的回滚/回血逻辑读到的生命恒为 0，死亡状态机必然接管。
+        TerminalStateRegistry.hijack(target);
         target.getPersistentData().putBoolean(HEALTH_HIJACK_KEY, true);
         KillChainMonitor.log("HIJACK_ON getHealth 劫持启用");
 

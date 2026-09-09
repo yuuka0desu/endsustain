@@ -1,6 +1,5 @@
 package com.endsustain.mixin;
 
-import com.endsustain.combat.EndsustainTerminal;
 import com.endsustain.combat.TerminalDeathStateAccess;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.entity.LivingEntity;
@@ -40,14 +39,28 @@ public abstract class LivingEntityTerminalStateMixin implements TerminalDeathSta
 
     @Unique
     private boolean endsustain$terminalState() {
-        return ((LivingEntity) (Object) this).getPersistentData()
-                .getBoolean(EndsustainTerminal.TERMINAL_KEY);
+        return com.endsustain.combat.TerminalStateRegistry.isMarked((LivingEntity) (Object) this);
     }
 
     @ModifyArg(method = "setHealth", at = @At(value = "INVOKE",
             target = "Lnet/minecraft/util/Mth;clamp(FFF)F"), index = 0)
     private float endsustain$forceZeroHealth(float health) {
         return endsustain$terminalState() ? 0.0F : health;
+    }
+
+    /**
+     * 攻击事件取消兜底（审计 P3，主机制）：
+     * hurt 内重定向 ForgeHooks.onLivingAttack 调用点——事件照常 post（所有防御监听器
+     * 正常执行），但返回值对终焉标记实体恒为 false（取消无效）。
+     * 注入点在方法体内、事件 post 之后，任何事件监听器的注册顺序竞态都无法再覆盖。
+     */
+    @Redirect(method = "hurt", at = @At(value = "INVOKE", remap = false,
+            target = "Lnet/minecraftforge/common/ForgeHooks;"
+                    + "onLivingAttack(Lnet/minecraft/world/entity/LivingEntity;"
+                    + "Lnet/minecraft/world/damagesource/DamageSource;F)Z"))
+    private boolean endsustain$forceAttackProceed(LivingEntity entity, DamageSource source, float amount) {
+        boolean canceled = ForgeHooks.onLivingAttack(entity, source, amount);
+        return com.endsustain.combat.TerminalStateRegistry.isMarked(entity) && canceled ? false : canceled;
     }
 
     @Inject(method = "setAbsorptionAmount", at = @At("HEAD"), cancellable = true)
@@ -69,8 +82,8 @@ public abstract class LivingEntityTerminalStateMixin implements TerminalDeathSta
     private void endsustain$hijackGetHealth(
             org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable<Float> cir) {
         LivingEntity self = (LivingEntity) (Object) this;
-        if (self.getPersistentData().getBoolean(EndsustainTerminal.TERMINAL_KEY)
-                && self.getPersistentData().getBoolean(EndsustainTerminal.HEALTH_HIJACK_KEY)) {
+        if (com.endsustain.combat.TerminalStateRegistry.isMarked(self)
+                && com.endsustain.combat.TerminalStateRegistry.isHijacked(self)) {
             cir.setReturnValue(0.0F);
         }
     }

@@ -27,14 +27,30 @@ public final class TrueKillUtil {
     public static final String TERMINAL_STATE_KEY = "EndsustainTerminalState";
     private static final int NATURAL_TICK_DELAY = 1;
     private static final int FINALIZATION_TIMEOUT = 800;
-    private static final Map<UUID, PendingDeath> PENDING_DEATHS = new ConcurrentHashMap<>();
+    /** 审计 6.8-2：看门狗队列上限——P1「不放弃」使其成为硬约束，超限淘汰最旧条目并告警。 */
+    private static final int MAX_PENDING = 64;
+    private static final Map<UUID, PendingDeath> PENDING_DEATHS =
+            java.util.Collections.synchronizedMap(new java.util.LinkedHashMap<>());
     private static final Set<UUID> IN_PROGRESS = ConcurrentHashMap.newKeySet();
 
     private TrueKillUtil() {}
 
+    /**
+     * 审计 P4-3：豁免白名单双校验——instanceof + 实体注册名命名空间 = endsustain。
+     * 防止其他 Mod 把自己的实体继承成豁免类型绕过强杀链。
+     */
+    public static boolean isWhitelisted(LivingEntity target) {
+        net.minecraft.resources.ResourceLocation key =
+                net.minecraftforge.registries.ForgeRegistries.ENTITY_TYPES.getKey(target.getType());
+        boolean nativeNamespace = key != null && "endsustain".equals(key.getNamespace());
+        return (target instanceof SmallZhanjiangCompanionEntity
+                || target instanceof com.endsustain.entity.boss.FinaleEndsustainEntity)
+                && nativeNamespace;
+    }
+
     public static void forceKill(LivingEntity target, DamageSource source, LivingEntity attacker,
                                  float damage, boolean kickPlayer) {
-        if (target instanceof SmallZhanjiangCompanionEntity || target.isRemoved() || isPending(target)) return;
+        if (isWhitelisted(target) || target.isRemoved() || isPending(target)) return;
         UUID targetId = target.getUUID();
         if (!IN_PROGRESS.add(targetId)) return;
         try {
@@ -125,8 +141,20 @@ public final class TrueKillUtil {
 
     /** 终焉结算未能在当前 tick 移除目标时，挂入逐 tick 重试队列。 */
     public static void scheduleRetry(LivingEntity target, DamageSource source, LivingEntity attacker) {
-        PENDING_DEATHS.putIfAbsent(target.getUUID(),
-                new PendingDeath(target, source, attacker, FINALIZATION_TIMEOUT));
+        synchronized (PENDING_DEATHS) {
+            if (PENDING_DEATHS.size() >= MAX_PENDING
+                    && !PENDING_DEATHS.containsKey(target.getUUID())) {
+                // LRU 淘汰：移除最旧插入条目（淘汰即目标逃逸，必须显式告警）
+                UUID eldest = PENDING_DEATHS.keySet().iterator().next();
+                PendingDeath evicted = PENDING_DEATHS.remove(eldest);
+                KillChainMonitor.log("QUEUE_OVERFLOW 淘汰=" + eldest
+                        + " 类型=" + (evicted == null ? "?" : KillChainMonitor.typeName(evicted.target)));
+                EndSustain.LOGGER.warn("[终焉强杀] 看门狗队列满（{}），已淘汰最旧条目：{}",
+                        MAX_PENDING, evicted == null ? eldest : evicted.target.getType());
+            }
+            PENDING_DEATHS.putIfAbsent(target.getUUID(),
+                    new PendingDeath(target, source, attacker, FINALIZATION_TIMEOUT));
+        }
         EndSustain.LOGGER.info("终焉结算挂起：{} 存在额外防御，已进入逐 tick 强制结算队列",
                 target.getType());
     }
@@ -147,79 +175,107 @@ public final class TrueKillUtil {
     }
 
     public static void tickPendingDeaths(MinecraftServer server) {
-        Iterator<Map.Entry<UUID, PendingDeath>> iterator = PENDING_DEATHS.entrySet().iterator();
-        while (iterator.hasNext()) {
-            PendingDeath pending = iterator.next().getValue();
-            LivingEntity target = pending.target;
+        synchronized (PENDING_DEATHS) {
+            Iterator<Map.Entry<UUID, PendingDeath>> iterator = PENDING_DEATHS.entrySet().iterator();
+            while (iterator.hasNext()) {
+                PendingDeath pending = iterator.next().getValue();
+                LivingEntity target = pending.target;
 
-            if (target.isRemoved() || target.level().getServer() != server) {
-                EndsustainTerminal.unmark(target);
-                iterator.remove();
-                continue;
-            }
-            if (pending.ticksLeft-- <= 0) {
-                // 超时仍未自然死亡：先启动死亡动画入口（部分实体仅在其死亡演出状态
-                // 下才接受 setRemoved），再 Entity 层强制移除收尾。
-                KillChainMonitor.logTargetState("TIMEOUT", target, "800t 超时，setRemoved 兜底");
-                EntityHealthStateBridge.startDeathAnimation(target);
-                target.remove(net.minecraft.world.entity.Entity.RemovalReason.KILLED);
-                if (!target.isRemoved()) {
-                    target.discard();
-                    // Agent 保险层：所有路径结束后实体仍然存活时，
-                    // 启动外部 agent 反射移除实体并改写其字节码（仅一次）。
-                    if (!target.isRemoved()
-                            && !target.getPersistentData().getBoolean("EndsustainAgentArmed")) {
-                        target.getPersistentData().putBoolean("EndsustainAgentArmed", true);
-                        KillChainMonitor.log("AGENT_LAUNCH 目标=" + KillChainMonitor.typeName(target));
-                        AgentBridge.forceKillViaAgent(target);
-                    }
-                }
-                EndsustainTerminal.unmark(target);
-                iterator.remove();
-                EndSustain.LOGGER.info("终焉结算超时，已强制移除：{}", target.getType());
-                continue;
-            }
-
-            if (deathTransactionStarted(target)) {
-                if (target.isRemoved()) {
+                if (target.isRemoved() || target.level().getServer() != server) {
                     EndsustainTerminal.unmark(target);
                     iterator.remove();
                     continue;
                 }
-                // 死亡事务已建立但实体仍未移除（死亡序列/演出进行中）：
-                // 不再调用 die，持续泵伤害驱动「须伤害事件才启动死亡序列」的防御，
-                // 并维持归零，直到实体自行移除或超时兜底。
-                KillChainMonitor.logTargetState("POST_DEATH_PUMP", target, "死亡事务已建立，持续泵伤害");
-                try {
-                    target.hurt(target.damageSources().fellOutOfWorld(), 1.0F);
-                } catch (Throwable ignored) {
+                if (pending.ticksLeft-- <= 0) {
+                    // 审计 P1：超时不再放弃——REMOVAL_PUMP 持续泵移除直至成功。
+                    KillChainMonitor.logTargetState("TIMEOUT", target, "800t 超时，setRemoved 兜底");
+                    EntityHealthStateBridge.startDeathAnimation(target);
+                    try {
+                        target.remove(net.minecraft.world.entity.Entity.RemovalReason.KILLED);
+                    } catch (Throwable ignored) {
+                    }
+                    if (!target.isRemoved() && target instanceof TerminalRemovalAccess access) {
+                        try {
+                            access.endsustain$forceRemoval(true);
+                        } catch (Throwable ignored) {
+                        }
+                    }
+                    if (!target.isRemoved()) {
+                        try {
+                            target.discard();
+                        } catch (Throwable ignored) {
+                        }
+                    }
+                    // 审计 P5：agent 重试计数移入 PendingDeath（目标不可接触），≤3 次、间隔 ≥100 tick
+                    if (!target.isRemoved() && pending.pumpTicks % 100 == 0 && pending.agentAttempts++ < 3) {
+                        KillChainMonitor.log("AGENT_LAUNCH 目标=" + KillChainMonitor.typeName(target)
+                                + " 第" + pending.agentAttempts + "次");
+                        AgentBridge.forceKillViaAgent(target);
+                    }
+                    if (target.isRemoved()) {
+                        EndsustainTerminal.unmark(target);
+                        iterator.remove();
+                        continue;
+                    }
+                    if (++pending.pumpTicks % 20 == 0) {
+                        if (target instanceof TerminalRemovalAccess access) {
+                            try {
+                                access.endsustain$forceRemoval(true);
+                            } catch (Throwable ignored) {
+                            }
+                        }
+                        try {
+                            target.discard();
+                        } catch (Throwable ignored) {
+                        }
+                    }
+                    if (pending.pumpTicks % 100 == 0) {
+                        KillChainMonitor.logTargetState("REMOVAL_PUMP", target, "泵=" + pending.pumpTicks);
+                    }
+                    continue;
                 }
-                EntityHealthStateBridge.neutralize(target);
-                continue;
-            }
-            applyKillCredit(target, pending.attacker);
-            pending.ticksElapsed++;
-            // 伤害泵：目标未进入死亡流程时每 tick 施加无实体来源且绕过无敌的虚空伤害，
-            // 驱动「须经过伤害事件才启动死亡状态机」的防御；死亡流程启动后停泵避免打断演出。
-            if (!target.isDeadOrDying()) {
-                try {
-                    boolean pumped = target.hurt(target.damageSources().fellOutOfWorld(), 1.0F);
-                    KillChainMonitor.logTargetState("DAMAGE_PUMP", target, "生效=" + pumped);
-                } catch (Throwable ignored) {
+
+                if (deathTransactionStarted(target)) {
+                    if (target.isRemoved()) {
+                        EndsustainTerminal.unmark(target);
+                        iterator.remove();
+                        continue;
+                    }
+                    // 死亡事务已建立但实体仍未移除（死亡序列/演出进行中）：
+                    // 不再调用 die，持续泵伤害驱动「须伤害事件才启动死亡序列」的防御，
+                    // 并维持归零，直到实体自行移除或超时兜底。
+                    KillChainMonitor.logTargetState("POST_DEATH_PUMP", target, "死亡事务已建立，持续泵伤害");
+                    try {
+                        target.hurt(target.damageSources().fellOutOfWorld(), 1.0F);
+                    } catch (Throwable ignored) {
+                    }
+                    EntityHealthStateBridge.neutralize(target);
+                    continue;
                 }
-            }
-            // 管道磨血兜底：每 10 tick 一次合法大额伤害（防数据项写入被未知兼容层拦截的极端环境）
-            if (pending.ticksElapsed % 10 == 0) {
-                try {
-                    DamageSource grind = pending.attacker instanceof ServerPlayer player
-                            ? target.damageSources().playerAttack(player)
-                            : target.damageSources().generic();
-                    target.hurt(grind, 99999.0F);
-                } catch (Throwable ignored) {
+                applyKillCredit(target, pending.attacker);
+                pending.ticksElapsed++;
+                // 伤害泵：目标未进入死亡流程时每 tick 施加无实体来源且绕过无敌的虚空伤害，
+                // 驱动「须经过伤害事件才启动死亡状态机」的防御；死亡流程启动后停泵避免打断演出。
+                if (!target.isDeadOrDying()) {
+                    try {
+                        boolean pumped = target.hurt(target.damageSources().fellOutOfWorld(), 1.0F);
+                        KillChainMonitor.logTargetState("DAMAGE_PUMP", target, "生效=" + pumped);
+                    } catch (Throwable ignored) {
+                    }
                 }
-            }
-            if (EndsustainTerminal.retryTick(target, pending.source, pending.attacker)) {
-                iterator.remove();
+                // 管道磨血兜底：每 10 tick 一次合法大额伤害（防数据项写入被未知兼容层拦截的极端环境）
+                if (pending.ticksElapsed % 10 == 0) {
+                    try {
+                        DamageSource grind = pending.attacker instanceof ServerPlayer player
+                                ? target.damageSources().playerAttack(player)
+                                : target.damageSources().generic();
+                        target.hurt(grind, 99999.0F);
+                    } catch (Throwable ignored) {
+                    }
+                }
+                if (EndsustainTerminal.retryTick(target, pending.source, pending.attacker)) {
+                    iterator.remove();
+                }
             }
         }
     }
@@ -260,6 +316,10 @@ public final class TrueKillUtil {
         private final LivingEntity attacker;
         private int ticksLeft;
         private int ticksElapsed;
+        /** REMOVAL_PUMP 泵计数（超时后逐 tick 递增）。 */
+        private int pumpTicks;
+        /** Agent 启动次数（审计 P5：≤3，移入模组私有对象，目标不可接触）。 */
+        private int agentAttempts;
 
         private PendingDeath(LivingEntity target, DamageSource source,
                              LivingEntity attacker, int ticksLeft) {

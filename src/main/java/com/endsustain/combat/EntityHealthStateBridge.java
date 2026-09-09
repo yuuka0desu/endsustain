@@ -29,9 +29,10 @@ public final class EntityHealthStateBridge {
     public static boolean zeroActiveHealth(LivingEntity target) {
         if (target.getHealth() <= 0.0F) return true;
 
-        if (VANILLA_HEALTH != null) {
+        EntityDataAccessor<Float> vanilla = healthAccessor(target);
+        if (vanilla != null) {
             try {
-                target.getEntityData().set(VANILLA_HEALTH, 0.0F);
+                target.getEntityData().set(vanilla, 0.0F);
                 if (target.getHealth() <= 0.0F) return true;
             } catch (RuntimeException ignored) {
             }
@@ -72,9 +73,10 @@ public final class EntityHealthStateBridge {
         }
         boolean hit = false;
 
-        if (VANILLA_HEALTH != null) {
+        EntityDataAccessor<Float> vanilla = healthAccessor(target);
+        if (vanilla != null) {
             try {
-                data.set(VANILLA_HEALTH, 0.0F);
+                data.set(vanilla, 0.0F);
                 hit = true;
             } catch (RuntimeException ignored) {
             }
@@ -181,16 +183,45 @@ public final class EntityHealthStateBridge {
     }
 
     /**
-     * 无效化层 4：persistentData 全部浮点键写 0（虚拟生命类存储）。
+     * 无效化层 4：persistentData 数字键归零（虚拟生命类存储）。
+     * 审计 P7 修订：数字类型 tag 全归零会误清坐标/计时器——
+     * 改为「键名模式（health/hp/life/blood/virtual）或值域过滤（[0, max(1e6, maxHealth)]）」
+     * 二者满足其一才归零，保护无关状态。
      */
     public static boolean zeroPersistentFloats(LivingEntity target) {
         net.minecraft.nbt.CompoundTag tag = target.getPersistentData();
+        float maxHealth;
+        try {
+            maxHealth = target.getMaxHealth();
+        } catch (Throwable t) {
+            maxHealth = Float.MAX_VALUE;
+        }
+        double valueCeil = Math.max(1_000_000.0D, (double) maxHealth);
         boolean hit = false;
         for (String key : tag.getAllKeys()) {
-            if (tag.getTagType(key) == net.minecraft.nbt.Tag.TAG_FLOAT) {
-                tag.putFloat(key, 0.0F);
-                hit = true;
+            int type = tag.getTagType(key);
+            boolean numeric = type == net.minecraft.nbt.Tag.TAG_FLOAT
+                    || type == net.minecraft.nbt.Tag.TAG_INT
+                    || type == net.minecraft.nbt.Tag.TAG_DOUBLE
+                    || type == net.minecraft.nbt.Tag.TAG_LONG;
+            if (!numeric) continue;
+            boolean healthLike = key.toLowerCase(java.util.Locale.ROOT)
+                    .matches(".*(health|hp|life|blood|virtual).*");
+            double v;
+            switch (type) {
+                case net.minecraft.nbt.Tag.TAG_FLOAT -> v = tag.getFloat(key);
+                case net.minecraft.nbt.Tag.TAG_INT -> v = tag.getInt(key);
+                case net.minecraft.nbt.Tag.TAG_DOUBLE -> v = tag.getDouble(key);
+                default -> v = tag.getLong(key);
             }
+            if (!healthLike && !(v >= 0.0D && v <= valueCeil)) continue;
+            switch (type) {
+                case net.minecraft.nbt.Tag.TAG_FLOAT -> tag.putFloat(key, 0.0F);
+                case net.minecraft.nbt.Tag.TAG_INT -> tag.putInt(key, 0);
+                case net.minecraft.nbt.Tag.TAG_DOUBLE -> tag.putDouble(key, 0.0D);
+                default -> tag.putLong(key, 0L);
+            }
+            hit = true;
         }
         return hit;
     }
@@ -198,9 +229,10 @@ public final class EntityHealthStateBridge {
     /**
      * 无效化层 5：反向找生命值字段。
      * 从 getHealth() 的返回值反向匹配：扫描目标类继承链上全部非静态
-     * Float 实例字段（基本 float 与包装 Float），值 ≈ 当前生命 或 ≈ 最大生命 → 写 0。
+     * Float/Integer/Long 实例字段，值 ≈ 当前生命 或 ≈ 最大生命 → 写 0。
+     * int/long 采用「探测写 → 验证 → 否则回滚原值」模式（审计 P7 安全子集）；
      * 不触碰 double/Double 字段：部分实体内部对 Double 字段做 Float 强转，
-     * 归零会破坏其不变量并触发 ClassCastException。
+     * 归零会破坏其不变量并触发 ClassCastException（tutm 实战教训）。
      * 覆盖「生命存储在实例字段（而非数据项）」的实体。
      */
     public static boolean zeroInstanceHealthFields(LivingEntity target) {
@@ -220,7 +252,10 @@ public final class EntityHealthStateBridge {
             for (Field field : type.getDeclaredFields()) {
                 if (Modifier.isStatic(field.getModifiers())) continue;
                 Class<?> fieldType = field.getType();
-                if (fieldType != float.class && fieldType != Float.class) continue;
+                boolean isFloat = fieldType == float.class || fieldType == Float.class;
+                boolean isInt = fieldType == int.class || fieldType == Integer.class;
+                boolean isLong = fieldType == long.class || fieldType == Long.class;
+                if (!isFloat && !isInt && !isLong) continue;
                 try {
                     field.setAccessible(true);
                     Object value = field.get(target);
@@ -229,8 +264,25 @@ public final class EntityHealthStateBridge {
                     boolean matchHealth = Math.abs(v - (double) health) <= EPSILON;
                     boolean matchMax = Math.abs(v - (double) maxHealth) <= EPSILON;
                     if (!matchHealth && !matchMax) continue;
-                    field.set(target, 0.0F);
-                    hit = true;
+                    if (isFloat) {
+                        field.set(target, 0.0F);
+                        hit = true;
+                    } else {
+                        // 探测写：写 0 → 验证死亡状态成立；否则回滚原值
+                        long prev = number.longValue();
+                        if (isInt) {
+                            field.setInt(target, 0);
+                        } else {
+                            field.setLong(target, 0L);
+                        }
+                        if (target.getHealth() <= 0.0F || target.isDeadOrDying()) {
+                            hit = true;
+                        } else if (isInt) {
+                            field.setInt(target, (int) prev);
+                        } else {
+                            field.setLong(target, prev);
+                        }
+                    }
                 } catch (Throwable ignored) {
                 }
             }
@@ -305,7 +357,7 @@ public final class EntityHealthStateBridge {
      * 避免把数值误写入其他 Double 型同步数据导致类型污染。
      */
     public static boolean writeActiveHealth(LivingEntity target, float value) {
-        EntityDataAccessor<Float> vanilla = VANILLA_HEALTH;
+        EntityDataAccessor<Float> vanilla = healthAccessor(target);
         if (vanilla == null) return false;
         try {
             target.getEntityData().set(vanilla, Math.max(0.0F, value));
@@ -316,21 +368,61 @@ public final class EntityHealthStateBridge {
     }
 
     /** 原版生命同步 accessor：生产环境 SRG 名 f_20961_，开发环境 DATA_HEALTH_ID。 */
-    private static final EntityDataAccessor<Float> VANILLA_HEALTH = resolveVanillaHealth();
+    private static volatile EntityDataAccessor<Float> VANILLA_HEALTH = resolveVanillaHealthByName();
 
-    private static EntityDataAccessor<Float> resolveVanillaHealth() {
+    /**
+     * 审计 P6：原版生命槽解析。
+     * 1) 按字段名双候选解析；
+     * 2) 皆缺时惰性类型回退：扫描 LivingEntity 静态 EntityDataAccessor 字段，
+     *    serializer == FLOAT 的候选经「set(0) → getHealth()<=0 命中则缓存，否则回滚」行为探测。
+     *    1.20.1 中 Float 数据项仅有生命槽（javap 实证），类型过滤天然安全，探测防未来版本新增。
+     */
+    private static EntityDataAccessor<Float> healthAccessor(LivingEntity target) {
+        EntityDataAccessor<Float> current = VANILLA_HEALTH;
+        if (current != null) return current;
+        return tryResolveByType(target);
+    }
+
+    private static EntityDataAccessor<Float> resolveVanillaHealthByName() {
         for (String name : new String[]{"f_20961_", "DATA_HEALTH_ID"}) {
             try {
                 Field field = LivingEntity.class.getDeclaredField(name);
                 field.setAccessible(true);
                 Object value = field.get(null);
-                if (value instanceof EntityDataAccessor<?> accessor) {
+                if (value instanceof EntityDataAccessor<?> accessor
+                        && accessor.getSerializer() == EntityDataSerializers.FLOAT) {
                     return (EntityDataAccessor<Float>) accessor;
                 }
             } catch (Throwable ignored) {
             }
         }
-        EndSustain.LOGGER.warn("未能解析原版生命同步字段，终焉生命写入退化为 setHealth");
+        EndSustain.LOGGER.warn("未能按名称解析原版生命同步字段，将启用类型匹配惰性回退");
+        return null;
+    }
+
+    private static synchronized EntityDataAccessor<Float> tryResolveByType(LivingEntity target) {
+        if (VANILLA_HEALTH != null) return VANILLA_HEALTH;
+        for (Field field : LivingEntity.class.getDeclaredFields()) {
+            if (!Modifier.isStatic(field.getModifiers())) continue;
+            if (!EntityDataAccessor.class.isAssignableFrom(field.getType())) continue;
+            try {
+                field.setAccessible(true);
+                Object value = field.get(null);
+                if (!(value instanceof EntityDataAccessor<?> accessor)
+                        || accessor.getSerializer() != EntityDataSerializers.FLOAT) continue;
+                SynchedEntityData data = target.getEntityData();
+                Object previous = read(data, accessor);
+                write(data, accessor, Float.valueOf(0.0F));
+                boolean matched = target.getHealth() <= 0.0F;
+                if (!matched) {
+                    write(data, accessor, previous);
+                    continue;
+                }
+                VANILLA_HEALTH = (EntityDataAccessor<Float>) accessor;
+                return VANILLA_HEALTH;
+            } catch (Throwable ignored) {
+            }
+        }
         return null;
     }
 

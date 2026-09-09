@@ -12,7 +12,8 @@
     "LivingEntityTerminalStateMixin",
     "SynchedEntityDataMixin",
     "ServerLevelTimeStopMixin",
-    "ServerGamePacketTimeStopMixin"
+    "ServerGamePacketTimeStopMixin",
+    "EntityRemovalMixin"
   ],
   "client": [
     "LightTextureMixin",
