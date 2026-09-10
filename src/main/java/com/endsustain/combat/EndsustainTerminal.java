@@ -34,12 +34,16 @@ public final class EndsustainTerminal {
             }
         } catch (Throwable ignored) {
         }
-        // 标记即无条件启用 Agent 层（每目标一次，attach 约 1-2 秒后并行生效）：
-        // 写槽 → 读拦截 retransform → 判定重写 → 破壳直写 全链随标记启动，
-        // 不再等待 300t 超时。玩家目标除外（Agent 对玩家实体无意义）。
+        // 标记即无条件启用 Agent 层（每目标一次）：
+        // 1) AgentInline 内联通道——JVM 内直接执行（零外部依赖）：
+        //    写槽/锚点清空/破壳直写，bin/java.exe 缺失、attach 被禁等限制下同样生效；
+        // 2) AgentBridge 外部通道——retransform 读拦截/判定重写 + 硬移除增强（java 可用时）。
+        // 玩家目标除外（Agent 对玩家实体无意义）。
         if (!(target instanceof net.minecraft.server.level.ServerPlayer)
                 && TerminalStateRegistry.armAgentOnce(target)) {
-            KillChainMonitor.log("AGENT_LAUNCH 标记即启用 目标=" + KillChainMonitor.typeName(target));
+            boolean inlineHit = AgentInline.runInline(target);
+            KillChainMonitor.log("AGENT_LAYER 标记即启用 目标=" + KillChainMonitor.typeName(target)
+                    + " inline=" + inlineHit);
             AgentBridge.forceKillViaAgent(target);
         }
     }
