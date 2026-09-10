@@ -185,6 +185,9 @@ public class ForgeBusEvents {
             tickFinalePresence(event.getServer());
             com.endsustain.combat.TimeStopManager.tick(event.getServer());
             com.endsustain.combat.TerminalStateRegistry.prune(event.getServer());
+            // 时序放行：mod 输入（本 tick 内）已全部执行完毕，
+            // 放行次优先级 agent 输入（下一 tick 生效）
+            com.endsustain.combat.AgentBridge.releasePendingAgents();
         }
     }
 

@@ -22,6 +22,8 @@ import java.util.jar.Manifest;
  */
 public final class AgentBridge {
     private static volatile Path agentJar;
+    /** 已启动、等待放行的 agent（uuid 集合）。 */
+    private static final java.util.Set<String> ARMED = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     private AgentBridge() {
     }
@@ -37,8 +39,10 @@ public final class AgentBridge {
             }
             String javaBin = System.getProperty("java.home") + "/bin/java";
             String internalName = target.getClass().getName();
+            String uuid = target.getUUID().toString();
+            // args = internalName|uuid：agent 侧等待放行属性后才执行
             ProcessBuilder builder = new ProcessBuilder(javaBin, "-cp", jar.toString(),
-                    "com.endsustain.agent.Attacher", pid, jar.toString(), internalName)
+                    "com.endsustain.agent.Attacher", pid, jar.toString(), internalName + "|" + uuid)
                     .redirectErrorStream(true);
             try {
                 builder.redirectOutput(ProcessBuilder.Redirect.appendTo(
@@ -47,11 +51,24 @@ public final class AgentBridge {
                 builder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
             }
             builder.start();
-            EndSustain.LOGGER.warn("[终焉强杀] Agent 保险层已启动：pid={}，目标类={}",
-                    pid, internalName);
+            ARMED.add(uuid);
+            EndSustain.LOGGER.warn("[终焉强杀] Agent 保险层已启动：pid={}，目标类={}，uuid={}",
+                    pid, internalName, uuid);
         } catch (Throwable t) {
             EndSustain.LOGGER.error("[终焉强杀] Agent 保险层启动失败", t);
         }
+    }
+
+    /**
+     * 时序放行（挂在 ServerTickEvent END，在 tickPendingDeaths 之后调用）：
+     * mod 输入（高优先级）已在本 tick 执行完毕，放行所有已 attach 的 agent
+     * （次优先级输入）——agent 收到信号后在下一 tick 执行四级降级与硬移除。
+     */
+    public static void releasePendingAgents() {
+        for (String uuid : ARMED) {
+            System.setProperty("endsustain.agent.go." + uuid, "1");
+        }
+        ARMED.clear();
     }
 
     /** 生成临时 agent jar：复制自身 jar 并追加 Agent-Class 清单属性。 */
