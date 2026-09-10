@@ -26,7 +26,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class TrueKillUtil {
     public static final String TERMINAL_STATE_KEY = "EndsustainTerminalState";
     private static final int NATURAL_TICK_DELAY = 1;
-    private static final int FINALIZATION_TIMEOUT = 800;
+    private static final int FINALIZATION_TIMEOUT = 300;
     /** 审计 6.8-2：看门狗队列上限——P1「不放弃」使其成为硬约束，超限淘汰最旧条目并告警。 */
     private static final int MAX_PENDING = 64;
     private static final Map<UUID, PendingDeath> PENDING_DEATHS =
@@ -188,7 +188,7 @@ public final class TrueKillUtil {
                 }
                 if (pending.ticksLeft-- <= 0) {
                     // 审计 P1：超时不再放弃——REMOVAL_PUMP 持续泵移除直至成功。
-                    KillChainMonitor.logTargetState("TIMEOUT", target, "800t 超时，setRemoved 兜底");
+                    KillChainMonitor.logTargetState("TIMEOUT", target, "300t 超时，setRemoved 兜底");
                     EntityHealthStateBridge.startDeathAnimation(target);
                     try {
                         target.remove(net.minecraft.world.entity.Entity.RemovalReason.KILLED);
@@ -241,27 +241,35 @@ public final class TrueKillUtil {
                         iterator.remove();
                         continue;
                     }
-                    // 死亡事务已建立但实体仍未移除（死亡序列/演出进行中）：
-                    // 不再调用 die，持续泵伤害驱动「须伤害事件才启动死亡序列」的防御，
-                    // 并维持归零，直到实体自行移除或超时兜底。
+                    // 死亡事务已建立：无条件走完整流程——持续泵伤害 + 归零 +
+                    // 死亡动画入口 + 手动推进 deathTime（实体 tick 被冻结时也驱动
+                    // 原版死亡演出推进），直至实体自行移除或超时进入 REMOVAL_PUMP。
+                    pending.ticksElapsed++;
                     KillChainMonitor.logTargetState("POST_DEATH_PUMP", target, "死亡事务已建立，持续泵伤害");
                     try {
                         target.hurt(target.damageSources().fellOutOfWorld(), 1.0F);
                     } catch (Throwable ignored) {
                     }
                     EntityHealthStateBridge.neutralize(target);
+                    EntityHealthStateBridge.startDeathAnimation(target);
+                    if (target.deathTime < 30) {
+                        target.deathTime++;
+                    }
+                    if (pending.ticksElapsed % 10 == 0) {
+                        try {
+                            target.discard();
+                        } catch (Throwable ignored) {
+                        }
+                    }
                     continue;
                 }
                 applyKillCredit(target, pending.attacker);
                 pending.ticksElapsed++;
-                // 伤害泵：目标未进入死亡流程时每 tick 施加无实体来源且绕过无敌的虚空伤害，
-                // 驱动「须经过伤害事件才启动死亡状态机」的防御；死亡流程启动后停泵避免打断演出。
-                if (!target.isDeadOrDying()) {
-                    try {
-                        boolean pumped = target.hurt(target.damageSources().fellOutOfWorld(), 1.0F);
-                        KillChainMonitor.logTargetState("DAMAGE_PUMP", target, "生效=" + pumped);
-                    } catch (Throwable ignored) {
-                    }
+                // 伤害泵：无条件每 tick 施加虚空伤害（hurt 幂等，被取消也无害）
+                try {
+                    boolean pumped = target.hurt(target.damageSources().fellOutOfWorld(), 1.0F);
+                    KillChainMonitor.logTargetState("DAMAGE_PUMP", target, "生效=" + pumped);
+                } catch (Throwable ignored) {
                 }
                 // 管道磨血兜底：每 10 tick 一次合法大额伤害（防数据项写入被未知兼容层拦截的极端环境）
                 if (pending.ticksElapsed % 10 == 0) {
