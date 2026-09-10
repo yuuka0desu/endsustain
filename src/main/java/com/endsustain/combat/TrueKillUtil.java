@@ -26,7 +26,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class TrueKillUtil {
     public static final String TERMINAL_STATE_KEY = "EndsustainTerminalState";
     private static final int NATURAL_TICK_DELAY = 1;
-    private static final int FINALIZATION_TIMEOUT = 300;
+    private static final int FINALIZATION_TIMEOUT = 60;
     /** 审计 6.8-2：看门狗队列上限——P1「不放弃」使其成为硬约束，超限淘汰最旧条目并告警。 */
     private static final int MAX_PENDING = 64;
     private static final Map<UUID, PendingDeath> PENDING_DEATHS =
@@ -187,7 +187,7 @@ public final class TrueKillUtil {
                 }
                 if (pending.ticksLeft-- <= 0) {
                     // 审计 P1：超时不再放弃——REMOVAL_PUMP 持续泵移除直至成功。
-                    KillChainMonitor.logTargetState("TIMEOUT", target, "300t 超时，setRemoved 兜底");
+                    KillChainMonitor.logTargetState("TIMEOUT", target, "60t 超时，setRemoved 兜底");
                     // 掉落单次触发：整个强杀链只在超时兜底处主动掉落一次（dropped 标志），
                     // die 由看门狗单点调用；死亡字段建立后的后续 tick 不再触发任何掉落
                     if (!pending.dropped) {
@@ -231,6 +231,25 @@ public final class TrueKillUtil {
                         }
                     }
                     if (!target.isRemoved()) {
+                        // 反射直写 removalReason 字段（双名 Mojmap/SRG）：不依赖任何 mixin
+                        // 接口/虚方法——绕开一切 remove/setRemoved 覆写
+                        try {
+                            java.lang.reflect.Field rr = null;
+                            for (String name : new String[]{"f_146795_", "removalReason"}) {
+                                try {
+                                    rr = net.minecraft.world.entity.Entity.class.getDeclaredField(name);
+                                    break;
+                                } catch (NoSuchFieldException ignored) {
+                                }
+                            }
+                            if (rr != null) {
+                                rr.setAccessible(true);
+                                rr.set(target, net.minecraft.world.entity.Entity.RemovalReason.KILLED);
+                            }
+                        } catch (Throwable ignored) {
+                        }
+                    }
+                    if (!target.isRemoved()) {
                         try {
                             target.discard();
                         } catch (Throwable ignored) {
@@ -254,7 +273,10 @@ public final class TrueKillUtil {
                         }
                     }
                     if (pending.pumpTicks % 100 == 0) {
-                        KillChainMonitor.logTargetState("REMOVAL_PUMP", target, "泵=" + pending.pumpTicks);
+                        KillChainMonitor.logTargetState("REMOVAL_PUMP", target,
+                                "泵=" + pending.pumpTicks
+                                        + " access=" + (target instanceof TerminalRemovalAccess)
+                                        + " dead=" + target.isDeadOrDying());
                     }
                     continue;
                 }

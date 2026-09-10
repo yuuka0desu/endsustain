@@ -45,8 +45,9 @@ public final class AgentBridge {
                     "com.endsustain.agent.Attacher", pid, jar.toString(), internalName + "|" + uuid)
                     .redirectErrorStream(true);
             try {
+                // 绝对路径落盘（工作目录漂移时相对路径会静默丢失）
                 builder.redirectOutput(ProcessBuilder.Redirect.appendTo(
-                        Path.of("logs", "endsustain-agent.log").toFile()));
+                        Path.of(System.getProperty("user.dir"), "logs", "endsustain-agent.log").toFile()));
             } catch (Throwable ignored) {
                 builder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
             }
