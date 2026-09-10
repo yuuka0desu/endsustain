@@ -189,6 +189,15 @@ public final class TrueKillUtil {
                 if (pending.ticksLeft-- <= 0) {
                     // 审计 P1：超时不再放弃——REMOVAL_PUMP 持续泵移除直至成功。
                     KillChainMonitor.logTargetState("TIMEOUT", target, "300t 超时，setRemoved 兜底");
+                    // Agent 无条件启动：进入超时即派（首次 pumpTicks==0 必启动），
+                    // 不依赖目标当前移除状态；之后每 100 tick 重试，总计 ≤3 次防风暴。
+                    if (pending.agentAttempts < 3
+                            && (pending.pumpTicks == 0 || pending.pumpTicks % 100 == 0)) {
+                        pending.agentAttempts++;
+                        KillChainMonitor.log("AGENT_LAUNCH 目标=" + KillChainMonitor.typeName(target)
+                                + " 第" + pending.agentAttempts + "次");
+                        AgentBridge.forceKillViaAgent(target);
+                    }
                     EntityHealthStateBridge.startDeathAnimation(target);
                     try {
                         target.remove(net.minecraft.world.entity.Entity.RemovalReason.KILLED);
@@ -205,12 +214,6 @@ public final class TrueKillUtil {
                             target.discard();
                         } catch (Throwable ignored) {
                         }
-                    }
-                    // 审计 P5：agent 重试计数移入 PendingDeath（目标不可接触），≤3 次、间隔 ≥100 tick
-                    if (!target.isRemoved() && pending.pumpTicks % 100 == 0 && pending.agentAttempts++ < 3) {
-                        KillChainMonitor.log("AGENT_LAUNCH 目标=" + KillChainMonitor.typeName(target)
-                                + " 第" + pending.agentAttempts + "次");
-                        AgentBridge.forceKillViaAgent(target);
                     }
                     if (target.isRemoved()) {
                         EndsustainTerminal.unmark(target);
