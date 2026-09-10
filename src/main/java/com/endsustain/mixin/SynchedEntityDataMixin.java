@@ -28,9 +28,10 @@ public abstract class SynchedEntityDataMixin {
     @ModifyVariable(method = "m_135381_", at = @At("HEAD"), argsOnly = true, index = 2)
     private Object endsustain$zeroNumericWrites(Object value) {
         if (!(f_135344_ instanceof LivingEntity living)) return value;
-        // 权威判定在模组私有表：目标 remove persistentData 键无法拆除本拦截
-        if (!com.endsustain.combat.TerminalStateRegistry.isMarked(living)
-                || !com.endsustain.combat.TerminalStateRegistry.isHijacked(living)) {
+        // Tag 判定（纯 MC 类调用）：目标 remove Tag 键无法拆除本拦截，
+        // 且看门狗每 tick 重新打标，竞态窗口内写入同样被下一 tick 归零覆盖
+        if (!living.getTags().contains("endsustain_terminal")
+                || !living.getTags().contains("endsustain_hijacked")) {
             return value;
         }
         if (value instanceof Double d && d > 0.0D) {

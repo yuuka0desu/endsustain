@@ -16,6 +16,8 @@ import net.minecraft.world.entity.LivingEntity;
 public final class EndsustainTerminal {
     /** 终焉标记：实体 Tag（非 persistentData 状态键）。权威判定仍在 TerminalStateRegistry。 */
     public static final String TERMINAL_TAG = "endsustain_terminal";
+    /** getHealth 劫持开关 Tag：mixin 按双 Tag 判定（纯 MC 类调用）。 */
+    public static final String HIJACK_TAG = "endsustain_hijacked";
     public static final String TERMINAL_KEY = "EndsustainTerminalState";
     /** getHealth 劫持开关：Registry 权威；persistentData 键仅作旧版本兼容影子。 */
     public static final String HEALTH_HIJACK_KEY = "EndsustainHealthHijacked";
@@ -24,7 +26,7 @@ public final class EndsustainTerminal {
 
     /** 给目标打上终焉标记（Tag + 私有表双写）：此后任何回血/正数生命写入都会被本模组 mixin 拦截。 */
     public static void mark(LivingEntity target) {
-        // 权威判定在模组私有表（TerminalStateRegistry），Tag 为对外可见形态
+        // 权威判定在模组私有表（TerminalStateRegistry），Tag 为 mixin 判定形态
         TerminalStateRegistry.mark(target);
         try {
             if (!target.getTags().contains(TERMINAL_TAG)) {
@@ -42,6 +44,17 @@ public final class EndsustainTerminal {
         }
     }
 
+    /** 启用 getHealth 劫持：加 hijack Tag（mixin 判定），Registry 同步。 */
+    public static void hijack(LivingEntity target) {
+        TerminalStateRegistry.hijack(target);
+        try {
+            if (!target.getTags().contains(HIJACK_TAG)) {
+                target.addTag(HIJACK_TAG);
+            }
+        } catch (Throwable ignored) {
+        }
+    }
+
     public static boolean isMarked(LivingEntity target) {
         return TerminalStateRegistry.isMarked(target);
     }
@@ -50,6 +63,7 @@ public final class EndsustainTerminal {
         TerminalStateRegistry.unmark(target.getUUID());
         try {
             target.removeTag(TERMINAL_TAG);
+            target.removeTag(HIJACK_TAG);
         } catch (Throwable ignored) {
         }
         // 旧版本持久键残留清理（兼容历史版本标记）
@@ -91,7 +105,7 @@ public final class EndsustainTerminal {
 
         // 五层归零完成后启用 getHealth 劫持：mixin 令 getHealth 恒返回 0，
         // 实体的回滚/回血逻辑读到的生命恒为 0，死亡状态机必然接管。
-        TerminalStateRegistry.hijack(target);
+        hijack(target);
         KillChainMonitor.log("HIJACK_ON getHealth 劫持启用");
 
         // L1：管道 hurt（完整受伤链；生命写入由 mixin 强制归零，原版死亡分支触发 die）
@@ -111,15 +125,8 @@ public final class EndsustainTerminal {
         }
         if (target.isRemoved()) return;
 
-        // L3：无条件调用 die——启动死亡演出/掉落钩子（死亡事务未建立时）。
-        // 不再依赖 getHealth<=0 或 deathTime==0 前置条件：标记实体无论其
-        // 生命读数/劫持是否生效，一律进入死亡链，后续由看门狗持续兜底。
-        if (!TrueKillUtil.isDeathTransactionStarted(target)) {
-            try {
-                target.die(source);
-            } catch (Throwable ignored) {
-            }
-        }
+        // L3 起挂入看门狗：die 由看门狗单点调用（PendingDeath.dieCalled 标志，
+        // 每目标一次——掉落只触发一次，后续 tick 检测到死亡字段不再重复触发）
         if (target.isRemoved()) return;
 
         TrueKillUtil.scheduleRetry(target, source, attacker);
@@ -143,13 +150,8 @@ public final class EndsustainTerminal {
                         + " registry=" + TerminalStateRegistry.isMarked(target)
                         + "/" + TerminalStateRegistry.isHijacked(target));
 
-        // 无条件调用 die（死亡事务未建立时）：不依赖 deathTime/生命读数
-        if (!TrueKillUtil.isDeathTransactionStarted(target)) {
-            try {
-                target.die(source);
-            } catch (Throwable ignored) {
-            }
-        }
+        // die 由 tickPendingDeaths 单点调用（PendingDeath.dieCalled 保护），
+        // 此处不再重复调用——掉落只触发一次
         return target.isRemoved();
     }
 

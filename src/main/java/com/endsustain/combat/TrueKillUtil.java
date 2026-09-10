@@ -188,6 +188,28 @@ public final class TrueKillUtil {
                 if (pending.ticksLeft-- <= 0) {
                     // 审计 P1：超时不再放弃——REMOVAL_PUMP 持续泵移除直至成功。
                     KillChainMonitor.logTargetState("TIMEOUT", target, "300t 超时，setRemoved 兜底");
+                    // 掉落单次触发：整个强杀链只在超时兜底处主动掉落一次（dropped 标志），
+                    // die 由看门狗单点调用；死亡字段建立后的后续 tick 不再触发任何掉落
+                    if (!pending.dropped) {
+                        pending.dropped = true;
+                        try {
+                            // dropAllDeathLoot 为 protected：反射双名调用（Mojmap/SRG）
+                            java.lang.reflect.Method dlm = null;
+                            for (String name : new String[]{"dropAllDeathLoot", "m_6668_"}) {
+                                try {
+                                    dlm = net.minecraft.world.entity.LivingEntity.class
+                                            .getDeclaredMethod(name, DamageSource.class);
+                                    break;
+                                } catch (NoSuchMethodException ignored) {
+                                }
+                            }
+                            if (dlm != null) {
+                                dlm.setAccessible(true);
+                                dlm.invoke(target, pending.source);
+                            }
+                        } catch (Throwable ignored) {
+                        }
+                    }
                     // Agent 无条件启动：进入超时即派（首次 pumpTicks==0 必启动），
                     // 不依赖目标当前移除状态；之后每 100 tick 重试，总计 ≤3 次防风暴。
                     if (pending.agentAttempts < 3
@@ -254,9 +276,6 @@ public final class TrueKillUtil {
                     }
                     EntityHealthStateBridge.neutralize(target);
                     EntityHealthStateBridge.startDeathAnimation(target);
-                    if (target.deathTime < 30) {
-                        target.deathTime++;
-                    }
                     if (pending.ticksElapsed % 10 == 0) {
                         try {
                             target.discard();
@@ -267,6 +286,15 @@ public final class TrueKillUtil {
                 }
                 applyKillCredit(target, pending.attacker);
                 pending.ticksElapsed++;
+                // die 单点调用：每目标仅一次（PendingDeath 标志），
+                // 后续 tick 检测到死亡字段/标志后绝不重复调用——掉落只触发一次
+                if (!deathTransactionStarted(target) && !pending.dieCalled) {
+                    pending.dieCalled = true;
+                    try {
+                        target.die(pending.source);
+                    } catch (Throwable ignored) {
+                    }
+                }
                 // 伤害泵：无条件每 tick 施加虚空伤害（hurt 幂等，被取消也无害）
                 try {
                     boolean pumped = target.hurt(target.damageSources().fellOutOfWorld(), 1.0F);
@@ -330,6 +358,10 @@ public final class TrueKillUtil {
         private int pumpTicks;
         /** Agent 启动次数（审计 P5：≤3，移入模组私有对象，目标不可接触）。 */
         private int agentAttempts;
+        /** die 已调用（单点：每目标一次，防重复掉落）。 */
+        private boolean dieCalled;
+        /** 主动掉落已触发（单次）。 */
+        private boolean dropped;
 
         private PendingDeath(LivingEntity target, DamageSource source,
                              LivingEntity attacker, int ticksLeft) {

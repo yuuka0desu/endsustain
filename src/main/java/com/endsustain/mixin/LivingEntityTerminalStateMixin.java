@@ -37,9 +37,16 @@ public abstract class LivingEntityTerminalStateMixin implements TerminalDeathSta
         this.dead = true;
     }
 
+    /** 终焉标记 Tag（与 EndsustainTerminal.TERMINAL_TAG 同值，字符串内联避免跨类加载依赖）。 */
+    @Unique
+    private static final String TERMINAL_TAG = "endsustain_terminal";
+    /** getHealth 劫持 Tag（EndsustainTerminal.HIJACK_TAG 同值）。 */
+    @Unique
+    private static final String HIJACK_TAG = "endsustain_hijacked";
+
     @Unique
     private boolean endsustain$terminalState() {
-        return com.endsustain.combat.TerminalStateRegistry.isMarked((LivingEntity) (Object) this);
+        return ((LivingEntity) (Object) this).getTags().contains(TERMINAL_TAG);
     }
 
     @ModifyArg(method = "setHealth", at = @At(value = "INVOKE",
@@ -60,7 +67,7 @@ public abstract class LivingEntityTerminalStateMixin implements TerminalDeathSta
                     + "Lnet/minecraft/world/damagesource/DamageSource;F)Z"))
     private boolean endsustain$forceAttackProceed(LivingEntity entity, DamageSource source, float amount) {
         boolean canceled = ForgeHooks.onLivingAttack(entity, source, amount);
-        return com.endsustain.combat.TerminalStateRegistry.isMarked(entity) && canceled ? false : canceled;
+        return entity.getTags().contains(TERMINAL_TAG) && canceled ? false : canceled;
     }
 
     @Inject(method = "setAbsorptionAmount", at = @At("HEAD"), cancellable = true)
@@ -74,7 +81,7 @@ public abstract class LivingEntityTerminalStateMixin implements TerminalDeathSta
     }
 
     /**
-     * getHealth 劫持：五层归零完成后（HEALTH_HIJACK_KEY），
+     * getHealth 劫持：标记 + 劫持双 Tag 判定（纯 MC 类调用，无跨类加载依赖），
      * 标记实体的 getHealth 恒返回 0——回滚/回血逻辑读到的生命恒为 0，
      * 死亡状态机必然接管，任何外部写回都被读取层屏蔽。
      */
@@ -82,8 +89,8 @@ public abstract class LivingEntityTerminalStateMixin implements TerminalDeathSta
     private void endsustain$hijackGetHealth(
             org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable<Float> cir) {
         LivingEntity self = (LivingEntity) (Object) this;
-        if (com.endsustain.combat.TerminalStateRegistry.isMarked(self)
-                && com.endsustain.combat.TerminalStateRegistry.isHijacked(self)) {
+        if (self.getTags().contains(TERMINAL_TAG)
+                && self.getTags().contains(HIJACK_TAG)) {
             cir.setReturnValue(0.0F);
         }
     }
