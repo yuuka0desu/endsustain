@@ -50,9 +50,10 @@ public final class AgentBridge {
                     "com.endsustain.agent.Attacher", pid, jar.toString(), internalName + "|" + uuid)
                     .redirectErrorStream(true);
             try {
-                // 绝对路径落盘（工作目录漂移时相对路径会静默丢失）
+                // 相对路径落盘（与 KillChainMonitor 同策略：基于 JVM 工作目录=游戏实例目录；
+                // 不可用 user.dir——PCL 环境下该属性可能为 "/"）
                 builder.redirectOutput(ProcessBuilder.Redirect.appendTo(
-                        Path.of(System.getProperty("user.dir"), "logs", "endsustain-agent.log").toFile()));
+                        Path.of("logs", "endsustain-agent.log").toFile()));
             } catch (Throwable ignored) {
                 builder.redirectOutput(ProcessBuilder.Redirect.DISCARD);
             }

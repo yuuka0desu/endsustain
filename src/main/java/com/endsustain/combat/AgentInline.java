@@ -103,23 +103,19 @@ public final class AgentInline {
 
     /** 目标实体 codeSource 所在 mods 目录的全部 jar 类枚举 + 目标类加载器 Class.forName。
      *  黑盒防御类可能位于与实体类不同的 mod jar（如实体在 goety、黑盒在 endertarget），
-     *  因此扫描整个 mods 目录而非仅实体自身 jar。结果静态缓存 + 关键词粗筛。 */
+     *  因此扫描整个 mods 目录而非仅实体自身 jar。结果静态缓存 + 关键词粗筛。
+     *  mods 目录定位：FMLPaths.GAMEDIR（Forge 官方）优先，logs 父目录兜底，
+     *  codeSource 再兜底（Forge 1.20.1 可能返回 null）。 */
     private static List<Class<?>> cachedClasses(LivingEntity target) {
         List<Class<?>> cached = CLASS_CACHE;
         if (cached != null) return cached;
         List<Class<?>> classes = new ArrayList<>();
         try {
-            java.security.CodeSource source = target.getClass().getProtectionDomain().getCodeSource();
-            if (source == null || source.getLocation() == null) return classes;
-            java.net.URI uri = source.getLocation().toURI();
-            java.nio.file.Path jarPath;
-            try {
-                jarPath = java.nio.file.Path.of(uri);
-            } catch (Throwable t) {
+            java.nio.file.Path modsDir = resolveModsDir(target);
+            if (modsDir == null) {
+                KillChainMonitor.log("AGENT_INLINE mods目录定位失败");
                 return classes;
             }
-            java.nio.file.Path modsDir = jarPath.getParent();
-            if (modsDir == null || !java.nio.file.Files.isDirectory(modsDir)) return classes;
             ClassLoader loader = target.getClass().getClassLoader();
             List<java.nio.file.Path> jars = new ArrayList<>();
             try (var stream = java.nio.file.Files.list(modsDir)) {
@@ -151,6 +147,32 @@ public final class AgentInline {
         }
         CLASS_CACHE = classes;
         return classes;
+    }
+
+    /** mods 目录三级定位：FMLPaths.GAMEDIR → logs 父目录 → codeSource。 */
+    private static java.nio.file.Path resolveModsDir(LivingEntity target) {
+        try {
+            java.nio.file.Path viaFml = net.minecraftforge.fml.loading.FMLPaths.GAMEDIR.get()
+                    .resolve("mods");
+            if (java.nio.file.Files.isDirectory(viaFml)) return viaFml;
+        } catch (Throwable ignored) {
+        }
+        try {
+            java.nio.file.Path viaLogs = java.nio.file.Path.of("logs").toAbsolutePath()
+                    .getParent().resolve("mods");
+            if (java.nio.file.Files.isDirectory(viaLogs)) return viaLogs;
+        } catch (Throwable ignored) {
+        }
+        try {
+            java.security.CodeSource source = target.getClass().getProtectionDomain().getCodeSource();
+            if (source != null && source.getLocation() != null) {
+                java.nio.file.Path jarPath = java.nio.file.Path.of(source.getLocation().toURI());
+                java.nio.file.Path parent = jarPath.getParent();
+                if (parent != null && java.nio.file.Files.isDirectory(parent)) return parent;
+            }
+        } catch (Throwable ignored) {
+        }
+        return null;
     }
 
     /** 槽写入器：static void write(X, float, int, long)，声明类含 native 或 Unsafe 特征。 */
