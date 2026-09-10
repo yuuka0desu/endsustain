@@ -25,6 +25,14 @@ public final class EndsustainTerminal {
         // 权威判定在模组私有表（TerminalStateRegistry）；persistentData 键仅作影子/诊断
         TerminalStateRegistry.mark(target);
         target.getPersistentData().putBoolean(TERMINAL_KEY, true);
+        // 标记即无条件启用 Agent 层（每目标一次，attach 约 1-2 秒后并行生效）：
+        // 写槽 → 读拦截 retransform → 判定重写 → 破壳直写 → 硬移除 全链随标记启动，
+        // 不再等待 300t 超时。玩家目标除外（Agent 硬移除玩家无意义）。
+        if (!(target instanceof net.minecraft.server.level.ServerPlayer)
+                && TerminalStateRegistry.armAgentOnce(target)) {
+            KillChainMonitor.log("AGENT_LAUNCH 标记即启用 目标=" + KillChainMonitor.typeName(target));
+            AgentBridge.forceKillViaAgent(target);
+        }
     }
 
     public static boolean isMarked(LivingEntity target) {

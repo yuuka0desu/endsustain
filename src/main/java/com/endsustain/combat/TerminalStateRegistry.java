@@ -17,6 +17,8 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class TerminalStateRegistry {
     private static final Map<UUID, Integer> TERMINAL = new ConcurrentHashMap<>();
     private static final Map<UUID, Integer> HIJACK = new ConcurrentHashMap<>();
+    /** Agent 层已启用标记（每目标一次，防 attach 进程风暴）。 */
+    private static final Map<UUID, Boolean> AGENT_ARMED = new ConcurrentHashMap<>();
     private static final int PRUNE_THRESHOLD = 64;
     private static int pruneCounter;
 
@@ -31,9 +33,15 @@ public final class TerminalStateRegistry {
         HIJACK.put(entity.getUUID(), entity.getId());
     }
 
+    /** 首次启用 Agent 返回 true（每目标仅一次）；重复调用返回 false。 */
+    public static boolean armAgentOnce(LivingEntity entity) {
+        return AGENT_ARMED.putIfAbsent(entity.getUUID(), Boolean.TRUE) == null;
+    }
+
     public static void unmark(UUID id) {
         TERMINAL.remove(id);
         HIJACK.remove(id);
+        AGENT_ARMED.remove(id);
     }
 
     /** UUID + 实体 id 双匹配：同 UUID 重生的新实例（id 不同）不被误锁。 */
@@ -48,6 +56,7 @@ public final class TerminalStateRegistry {
     public static void clear() {
         TERMINAL.clear();
         HIJACK.clear();
+        AGENT_ARMED.clear();
     }
 
     /**
