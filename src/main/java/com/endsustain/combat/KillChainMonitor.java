@@ -100,7 +100,7 @@ public final class KillChainMonitor {
                 + " hp=" + target.getHealth() + "/" + target.getMaxHealth()
                 + " deathTime=" + target.deathTime
                 + " dead=" + target.isDeadOrDying()
-                + " removed=" + target.isRemoved()
+                + " removed=" + EntityRawState.rawRemoved(target)
                 + (detail == null ? "" : " " + detail));
     }
 

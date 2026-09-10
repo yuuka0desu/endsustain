@@ -50,7 +50,7 @@ public final class TrueKillUtil {
 
     public static void forceKill(LivingEntity target, DamageSource source, LivingEntity attacker,
                                  float damage, boolean kickPlayer) {
-        if (isWhitelisted(target) || target.isRemoved() || isPending(target)) return;
+        if (isWhitelisted(target) || EntityRawState.rawRemoved(target) || isPending(target)) return;
         UUID targetId = target.getUUID();
         if (!IN_PROGRESS.add(targetId)) return;
         try {
@@ -180,7 +180,7 @@ public final class TrueKillUtil {
                 PendingDeath pending = iterator.next().getValue();
                 LivingEntity target = pending.target;
 
-                if (target.isRemoved() || target.level().getServer() != server) {
+                if (EntityRawState.rawRemoved(target) || target.level().getServer() != server) {
                     EndsustainTerminal.unmark(target);
                     iterator.remove();
                     continue;
@@ -255,7 +255,7 @@ public final class TrueKillUtil {
                         } catch (Throwable ignored) {
                         }
                     }
-                    if (target.isRemoved()) {
+                    if (EntityRawState.rawRemoved(target)) {
                         EndsustainTerminal.unmark(target);
                         iterator.remove();
                         continue;
@@ -282,7 +282,7 @@ public final class TrueKillUtil {
                 }
 
                 if (deathTransactionStarted(target)) {
-                    if (target.isRemoved()) {
+                    if (EntityRawState.rawRemoved(target)) {
                         EndsustainTerminal.unmark(target);
                         iterator.remove();
                         continue;

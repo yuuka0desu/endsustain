@@ -105,7 +105,7 @@ public final class EndsustainTerminal {
                 target.getType(), neutralized, target.getHealth(), target.getMaxHealth(),
                 target.isDeadOrDying());
         KillChainMonitor.logTargetState("L0", target, "neutralize写入=" + neutralized);
-        if (target.isRemoved()) return;
+        if (EntityRawState.rawRemoved(target)) return;
 
         // 五层归零完成后启用 getHealth 劫持：mixin 令 getHealth 恒返回 0，
         // 实体的回滚/回血逻辑读到的生命恒为 0，死亡状态机必然接管。
@@ -117,7 +117,7 @@ public final class EndsustainTerminal {
             target.hurt(source, Float.MAX_VALUE);
         } catch (Throwable ignored) {
         }
-        if (target.isRemoved()) return;
+        if (EntityRawState.rawRemoved(target)) return;
 
         // L2：GENERIC_KILL 内置退场兜底（无攻击者、伤害超过 5 倍最大生命）
         if (!TrueKillUtil.isDeathTransactionStarted(target)) {
@@ -127,11 +127,11 @@ public final class EndsustainTerminal {
             } catch (Throwable ignored) {
             }
         }
-        if (target.isRemoved()) return;
+        if (EntityRawState.rawRemoved(target)) return;
 
         // L3 起挂入看门狗：die 由看门狗单点调用（PendingDeath.dieCalled 标志，
         // 每目标一次——掉落只触发一次，后续 tick 检测到死亡字段不再重复触发）
-        if (target.isRemoved()) return;
+        if (EntityRawState.rawRemoved(target)) return;
 
         TrueKillUtil.scheduleRetry(target, source, attacker);
     }
@@ -143,7 +143,7 @@ public final class EndsustainTerminal {
      * - 管道磨血与 GENERIC_KILL 重试由队列按节拍驱动。
      */
     public static boolean retryTick(LivingEntity target, DamageSource source, LivingEntity attacker) {
-        if (target.isRemoved()) return true;
+        if (EntityRawState.rawRemoved(target)) return true;
         mark(target);
         clearDefenses(target);
         // 每 tick 四层归零：任何回滚/回血/纠正都敌不过下一 tick 的重新归零
@@ -156,7 +156,7 @@ public final class EndsustainTerminal {
 
         // die 由 tickPendingDeaths 单点调用（PendingDeath.dieCalled 保护），
         // 此处不再重复调用——掉落只触发一次
-        return target.isRemoved();
+        return EntityRawState.rawRemoved(target);
     }
 
     private static void clearDefenses(LivingEntity target) {

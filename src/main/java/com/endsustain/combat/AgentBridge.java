@@ -70,15 +70,16 @@ public final class AgentBridge {
      * 解析可用的 java 可执行文件：
      * 1) 游戏 java.home/bin/java（PCL 精简 runtime 通常没有）；
      * 2) 环境 PATH 的 "java"；
-     * 3) 常见 JDK 安装路径枚举（Microsoft/Adoptium/Oracle/Temurin）。
+     * 3) 常见 JDK 安装路径枚举（Microsoft/Adoptium/Oracle/Zulu/Corretto/BellSoft）。
+     * 全部候选收集后按「文件存在」验证（Windows 上 isExecutable 语义不稳定，用 isRegularFile）。
      */
     private static String resolveJavaExecutable() {
+        java.util.List<String> candidates = new java.util.ArrayList<>();
         // 1) java.home
         try {
-            Path home = Path.of(System.getProperty("java.home"), "bin",
+            candidates.add(Path.of(System.getProperty("java.home"), "bin",
                     System.getProperty("os.name", "").toLowerCase().contains("win")
-                            ? "java.exe" : "java");
-            if (Files.isExecutable(home)) return home.toString();
+                            ? "java.exe" : "java").toString());
         } catch (Throwable ignored) {
         }
         // 2) PATH 的 java
@@ -86,40 +87,52 @@ public final class AgentBridge {
             String path = System.getenv("PATH");
             if (path != null) {
                 for (String dir : path.split(java.io.File.pathSeparator)) {
-                    if (dir.isBlank()) continue;
-                    Path candidate = Path.of(dir, "java.exe");
-                    if (Files.isExecutable(candidate)) return candidate.toString();
+                    if (dir == null || dir.isBlank()) continue;
+                    try {
+                        candidates.add(Path.of(dir, "java.exe").toString());
+                    } catch (Throwable ignored) {
+                    }
                 }
             }
         } catch (Throwable ignored) {
         }
         // 3) 常见安装路径
-        String[] roots = {
-                System.getenv("ProgramFiles"), System.getenv("ProgramFiles(x86)")
-        };
-        String[] patterns = {
-                "Microsoft", "Eclipse Adoptium", "Java", "Zulu", "Amazon Corretto", "BellSoft"
-        };
+        String[] roots = {System.getenv("ProgramFiles"), System.getenv("ProgramFiles(x86)")};
+        String[] patterns = {"Microsoft", "Eclipse Adoptium", "Java", "Zulu",
+                "Amazon Corretto", "BellSoft", "ojdkbuild", "AdoptOpenJDK"};
         for (String root : roots) {
-            if (root == null) continue;
+            if (root == null || root.isBlank()) continue;
             for (String vendor : patterns) {
                 try {
                     Path vendorDir = Path.of(root, vendor);
                     if (!Files.isDirectory(vendorDir)) continue;
-                    java.util.List<Path> candidates = new java.util.ArrayList<>();
+                    java.util.List<Path> sub = new java.util.ArrayList<>();
                     try (var stream = Files.list(vendorDir)) {
-                        stream.forEach(candidates::add);
+                        stream.forEach(sub::add);
                     }
-                    candidates.sort(java.util.Comparator.reverseOrder());
-                    for (Path jdk : candidates) {
-                        Path bin = jdk.resolve("bin").resolve("java.exe");
-                        if (Files.isExecutable(bin)) return bin.toString();
+                    sub.sort(java.util.Comparator.reverseOrder());
+                    for (Path jdk : sub) {
+                        try {
+                            candidates.add(jdk.resolve("bin").resolve("java.exe").toString());
+                        } catch (Throwable ignored) {
+                        }
                     }
                 } catch (Throwable ignored) {
                 }
             }
         }
-        return null;
+        String hit = null;
+        for (String candidate : candidates) {
+            try {
+                if (Files.isRegularFile(Path.of(candidate))) {
+                    hit = candidate;
+                    break;
+                }
+            } catch (Throwable ignored) {
+            }
+        }
+        KillChainMonitor.log("AGENT_JAVA_SCAN 候选=" + candidates.size() + " 命中=" + hit);
+        return hit;
     }
 
     /**

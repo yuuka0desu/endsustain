@@ -60,6 +60,7 @@ public final class AgentInline {
             }
 
             // 2) 锚点清空
+            int anchors = 0;
             for (Class<?> c : candidates) {
                 try {
                     if (!hasStaticMap(c) || !hasAnchorStyleMethod(c)) continue;
@@ -70,6 +71,7 @@ public final class AgentInline {
                             Object map = f.get(null);
                             if (map instanceof Map<?, ?> mm) {
                                 mm.clear();
+                                anchors++;
                                 hit = true;
                             }
                         }
@@ -79,8 +81,12 @@ public final class AgentInline {
             }
 
             // 3) 破壳直写（黑盒类 static float 槽 → Unsafe）
-            hit |= smashStaticFloats(candidates);
+            boolean smashed = smashStaticFloats(candidates);
+            hit |= smashed;
 
+            KillChainMonitor.log("AGENT_INLINE 候选=" + candidates.size()
+                    + " 写槽=" + (writer != null) + " 锚点=" + anchors
+                    + " 破壳=" + smashed);
         } catch (Throwable ignored) {
         }
         return hit;
