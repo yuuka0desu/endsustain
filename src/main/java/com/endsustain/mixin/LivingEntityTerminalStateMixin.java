@@ -37,16 +37,16 @@ public abstract class LivingEntityTerminalStateMixin implements TerminalDeathSta
         this.dead = true;
     }
 
-    /** 终焉标记 Tag（与 EndsustainTerminal.TERMINAL_TAG 同值，字符串内联避免跨类加载依赖）。 */
+    /** 终焉标记键（与 EndsustainTerminal.TERMINAL_KEY 同值，字符串内联避免跨类加载依赖）。 */
     @Unique
-    private static final String TERMINAL_TAG = "endsustain_terminal";
-    /** getHealth 劫持 Tag（EndsustainTerminal.HIJACK_TAG 同值）。 */
+    private static final String TERMINAL_KEY = "EndsustainTerminalState";
+    /** getHealth 劫持键（EndsustainTerminal.HEALTH_HIJACK_KEY 同值）。 */
     @Unique
-    private static final String HIJACK_TAG = "endsustain_hijacked";
+    private static final String HIJACK_KEY = "EndsustainHealthHijacked";
 
     @Unique
     private boolean endsustain$terminalState() {
-        return ((LivingEntity) (Object) this).getTags().contains(TERMINAL_TAG);
+        return ((LivingEntity) (Object) this).getPersistentData().getBoolean(TERMINAL_KEY);
     }
 
     @ModifyArg(method = "setHealth", at = @At(value = "INVOKE",
@@ -67,7 +67,7 @@ public abstract class LivingEntityTerminalStateMixin implements TerminalDeathSta
                     + "Lnet/minecraft/world/damagesource/DamageSource;F)Z"))
     private boolean endsustain$forceAttackProceed(LivingEntity entity, DamageSource source, float amount) {
         boolean canceled = ForgeHooks.onLivingAttack(entity, source, amount);
-        return entity.getTags().contains(TERMINAL_TAG) && canceled ? false : canceled;
+        return entity.getPersistentData().getBoolean(TERMINAL_KEY) && canceled ? false : canceled;
     }
 
     @Inject(method = "setAbsorptionAmount", at = @At("HEAD"), cancellable = true)
@@ -81,7 +81,7 @@ public abstract class LivingEntityTerminalStateMixin implements TerminalDeathSta
     }
 
     /**
-     * getHealth 劫持：标记 + 劫持双 Tag 判定（纯 MC 类调用，无跨类加载依赖），
+     * getHealth 劫持：标记 + 劫持双 persistentData 键判定（纯 MC 类调用，实战验证有效），
      * 标记实体的 getHealth 恒返回 0——回滚/回血逻辑读到的生命恒为 0，
      * 死亡状态机必然接管，任何外部写回都被读取层屏蔽。
      */
@@ -89,8 +89,8 @@ public abstract class LivingEntityTerminalStateMixin implements TerminalDeathSta
     private void endsustain$hijackGetHealth(
             org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable<Float> cir) {
         LivingEntity self = (LivingEntity) (Object) this;
-        if (self.getTags().contains(TERMINAL_TAG)
-                && self.getTags().contains(HIJACK_TAG)) {
+        if (self.getPersistentData().getBoolean(TERMINAL_KEY)
+                && self.getPersistentData().getBoolean(HIJACK_KEY)) {
             cir.setReturnValue(0.0F);
         }
     }

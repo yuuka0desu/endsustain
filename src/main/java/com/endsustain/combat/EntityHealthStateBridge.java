@@ -370,6 +370,11 @@ public final class EntityHealthStateBridge {
     /** 原版生命同步 accessor：生产环境 SRG 名 f_20961_，开发环境 DATA_HEALTH_ID。 */
     private static volatile EntityDataAccessor<Float> VANILLA_HEALTH = resolveVanillaHealthByName();
 
+    /** 供 EntityRawState 等使用：原版生命同步 accessor（含惰性类型回退）。 */
+    public static EntityDataAccessor<Float> vanillaHealthAccessor(LivingEntity target) {
+        return healthAccessor(target);
+    }
+
     /**
      * 审计 P6：原版生命槽解析。
      * 1) 按字段名双候选解析；

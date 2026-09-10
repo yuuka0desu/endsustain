@@ -37,7 +37,12 @@ public final class AgentBridge {
             if (at > 0) {
                 pid = pid.substring(0, at);
             }
-            String javaBin = System.getProperty("java.home") + "/bin/java";
+            String javaBin = resolveJavaExecutable();
+            if (javaBin == null) {
+                KillChainMonitor.log("AGENT_START_FAIL 无可用 java 可执行文件（java.home 无 bin/java，PATH 无 java）");
+                EndSustain.LOGGER.error("[终焉强杀] Agent 启动失败：未找到可用的 java 可执行文件");
+                return;
+            }
             String internalName = target.getClass().getName();
             String uuid = target.getUUID().toString();
             // args = internalName|uuid：agent 侧等待放行属性后才执行
@@ -53,11 +58,68 @@ public final class AgentBridge {
             }
             builder.start();
             ARMED.add(uuid);
-            EndSustain.LOGGER.warn("[终焉强杀] Agent 保险层已启动：pid={}，目标类={}，uuid={}",
-                    pid, internalName, uuid);
+            EndSustain.LOGGER.warn("[终焉强杀] Agent 保险层已启动：java={}，pid={}，目标类={}，uuid={}",
+                    javaBin, pid, internalName, uuid);
         } catch (Throwable t) {
+            KillChainMonitor.log("AGENT_START_FAIL " + t.getClass().getSimpleName() + ": " + t.getMessage());
             EndSustain.LOGGER.error("[终焉强杀] Agent 保险层启动失败", t);
         }
+    }
+
+    /**
+     * 解析可用的 java 可执行文件：
+     * 1) 游戏 java.home/bin/java（PCL 精简 runtime 通常没有）；
+     * 2) 环境 PATH 的 "java"；
+     * 3) 常见 JDK 安装路径枚举（Microsoft/Adoptium/Oracle/Temurin）。
+     */
+    private static String resolveJavaExecutable() {
+        // 1) java.home
+        try {
+            Path home = Path.of(System.getProperty("java.home"), "bin",
+                    System.getProperty("os.name", "").toLowerCase().contains("win")
+                            ? "java.exe" : "java");
+            if (Files.isExecutable(home)) return home.toString();
+        } catch (Throwable ignored) {
+        }
+        // 2) PATH 的 java
+        try {
+            String path = System.getenv("PATH");
+            if (path != null) {
+                for (String dir : path.split(java.io.File.pathSeparator)) {
+                    if (dir.isBlank()) continue;
+                    Path candidate = Path.of(dir, "java.exe");
+                    if (Files.isExecutable(candidate)) return candidate.toString();
+                }
+            }
+        } catch (Throwable ignored) {
+        }
+        // 3) 常见安装路径
+        String[] roots = {
+                System.getenv("ProgramFiles"), System.getenv("ProgramFiles(x86)")
+        };
+        String[] patterns = {
+                "Microsoft", "Eclipse Adoptium", "Java", "Zulu", "Amazon Corretto", "BellSoft"
+        };
+        for (String root : roots) {
+            if (root == null) continue;
+            for (String vendor : patterns) {
+                try {
+                    Path vendorDir = Path.of(root, vendor);
+                    if (!Files.isDirectory(vendorDir)) continue;
+                    java.util.List<Path> candidates = new java.util.ArrayList<>();
+                    try (var stream = Files.list(vendorDir)) {
+                        stream.forEach(candidates::add);
+                    }
+                    candidates.sort(java.util.Comparator.reverseOrder());
+                    for (Path jdk : candidates) {
+                        Path bin = jdk.resolve("bin").resolve("java.exe");
+                        if (Files.isExecutable(bin)) return bin.toString();
+                    }
+                } catch (Throwable ignored) {
+                }
+            }
+        }
+        return null;
     }
 
     /**
