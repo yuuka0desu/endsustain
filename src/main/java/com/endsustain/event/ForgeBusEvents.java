@@ -288,8 +288,8 @@ public class ForgeBusEvents {
      */
     @SubscribeEvent(priority = EventPriority.LOWEST, receiveCanceled = true)
     public static void onTerminalDeathFinalization(LivingDeathEvent event) {
-        if (event.getEntity().getPersistentData()
-                .getBoolean(TrueKillUtil.TERMINAL_STATE_KEY)) {
+        // 标记判定走 Registry（Tag 仅为对外形态；persistentData 键已废弃）
+        if (com.endsustain.combat.EndsustainTerminal.isMarked(event.getEntity())) {
             event.setCanceled(false);
         }
     }

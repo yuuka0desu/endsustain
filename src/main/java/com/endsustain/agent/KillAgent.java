@@ -96,17 +96,11 @@ public final class KillAgent {
             List<Object> targets = collectTargets(inst, internalName, gameLoader);
             if (targets.isEmpty()) return;
 
-            // 优先级仲裁：Agent 的修改优先于主线程。attach 线程先写 wall-clock 时间戳
-            // 优先级标记——主线程在活跃窗口内让位（不修改目标），由 Agent 独占完成四级链。
-            for (Object t : targets) {
-                try {
-                    Method pd = method(t.getClass(), "m_20088_", "getPersistentData");
-                    Object tag = pd.invoke(t);
-                    Method putLong = tag.getClass().getMethod("putLong", String.class, long.class);
-                    putLong.invoke(tag, "EndsustainAgentPriority", System.currentTimeMillis());
-                } catch (Throwable ignored) {
-                }
-            }
+            // 竞态设计（与 mod 侧职责分离）：
+            // - mod 输入（优先，先发生）：实例状态——数据项归零/字段归零/removalReason/deathTime/Tag。
+            // - agent 输入（随后，attach 完成后立即执行，不 sleep）：
+            //   类字节码 retransform（JVM 安全点原子生效）+ 黑盒静态槽 + 黑盒公开 write API。
+            // 两者写入域不相交 → 结构性无竞态；agent 不触碰任何目标实例字段。
 
             // 0) 特征定位
             Method writer = locateSlotWriter(inst);
@@ -153,10 +147,9 @@ public final class KillAgent {
             // 5) L-Ω 破壳直写：dump 黑盒存储快照 + Unsafe 直写内部槽值（绕开一切字段写 guard）
             dumpAndSmashShell(inst, targets, writer);
 
-            // 6) 硬移除
-            for (Object target : targets) {
-                hardRemove(target);
-            }
+            // 实例级移除（die/remove/实体管理器/Unsafe 实例字段）由 mod 侧全权负责：
+            // mod 输入优先且每 tick 持续（forceRemoval 字段直达 + discard + REMOVAL_PUMP）。
+            // agent 不触碰实例——杜绝与 mod 的并发写竞态。
         } catch (Throwable t) {
             t.printStackTrace();
         }
@@ -719,134 +712,12 @@ public final class KillAgent {
         return targets;
     }
 
-    /** 硬移除三级兜底：die → remove(KILLED) → 实体管理器直删 → Unsafe 直写。 */
-    private static void hardRemove(Object entity) {
-        try {
-            ClassLoader loader = entity.getClass().getClassLoader();
-            Class<?> reasonCls = Class.forName("net.minecraft.world.entity.Entity$RemovalReason", true, loader);
-            Object killed = Enum.valueOf((Class<? extends Enum>) reasonCls, "KILLED");
-
-            // 0) die（触发死亡动画与掉落；判定已放行时生效）
-            try {
-                Method dieM = null;
-                for (Method mm : entity.getClass().getDeclaredMethods()) {
-                    if (mm.getReturnType() == void.class && mm.getParameterCount() == 1
-                            && !mm.getParameterTypes()[0].isPrimitive()) {
-                        String n = mm.getName();
-                        if (n.equals("die") || n.equals("m_6667_")) {
-                            dieM = mm;
-                            break;
-                        }
-                    }
-                }
-                if (dieM != null) {
-                    dieM.setAccessible(true);
-                    try {
-                        dieM.invoke(entity, new Object[]{null});
-                    } catch (Throwable ignored) {
-                    }
-                }
-            } catch (Throwable ignored) {
-            }
-            if (isRemoved(entity)) return;
-
-            // 1) 常规 remove(KILLED)（判定已放行时生效）
-            Method rm = method(entity.getClass(), "m_142687_", "remove", reasonCls);
-            if (rm != null) {
-                try {
-                    rm.invoke(entity, killed);
-                } catch (Throwable ignored) {
-                }
-            }
-            if (isRemoved(entity)) return;
-
-            // 2) 实体管理器直删（绕开一切方法级拦截）
-            try {
-                Method lvM = method(entity.getClass(), "m_9236_", "level");
-                if (lvM != null) {
-                    Object lv = lvM.invoke(entity);
-                    if (lv != null) {
-                        Field emf = field(lv.getClass(), "entityManager", "f_143244_");
-                        if (emf != null) {
-                            Object mgr = emf.get(lv);
-                            for (Method mm : mgr.getClass().getDeclaredMethods()) {
-                                if (mm.getParameterCount() == 1
-                                        && mm.getParameterTypes()[0].getName().contains("EntityAccess")) {
-                                    mm.setAccessible(true);
-                                    mm.invoke(mgr, entity);
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-            } catch (Throwable ignored) {
-            }
-            if (isRemoved(entity)) return;
-
-            // 3) Unsafe 直写字段（绕开字节码 PUTFIELD 改写层；字段名已 javap 实证）
-            try {
-                Object unsafe = theUnsafe();
-                Method putRef = unsafe.getClass().getMethod("putObject", Object.class, long.class, Object.class);
-                Method putBool = unsafe.getClass().getMethod("putBoolean", Object.class, long.class, boolean.class);
-                Method putInt = unsafe.getClass().getMethod("putInt", Object.class, long.class, int.class);
-                Method objOffset = unsafe.getClass().getMethod("objectFieldOffset", Field.class);
-
-                Field rr = field(entity.getClass(), "removalReason", "f_146795_");
-                if (rr != null) putRef.invoke(unsafe, entity, objOffset.invoke(unsafe, rr), killed);
-                Field dead = field(entity.getClass(), "dead", "f_20890_");
-                if (dead != null) putBool.invoke(unsafe, entity, objOffset.invoke(unsafe, dead), true);
-                Field dt = field(entity.getClass(), "deathTime", "f_20919_");
-                if (dt != null) putInt.invoke(unsafe, entity, objOffset.invoke(unsafe, dt), 19);
-            } catch (Throwable ignored) {
-            }
-        } catch (Throwable ignored) {
-        }
-    }
-
-    private static boolean isRemoved(Object entity) {
-        try {
-            Method m = method(entity.getClass(), "m_213877_", "isRemoved");
-            if (m != null) return (Boolean) m.invoke(entity);
-        } catch (Throwable ignored) {
-        }
-        return false;
-    }
-
     // ---------------------------------------------------------------- 反射基础设施
 
     private static ClassLoader locateGameLoader(Instrumentation inst) {
         for (Class<?> c : inst.getAllLoadedClasses()) {
             if ("net.minecraft.server.MinecraftServer".equals(c.getName())) {
                 return c.getClassLoader();
-            }
-        }
-        return null;
-    }
-
-    private static Method method(Class<?> c, String a, String b, Class<?>... params) {
-        for (Class<?> cur = c; cur != null; cur = cur.getSuperclass()) {
-            for (String n : new String[]{a, b}) {
-                try {
-                    Method m = cur.getDeclaredMethod(n, params);
-                    m.setAccessible(true);
-                    return m;
-                } catch (NoSuchMethodException ignored) {
-                }
-            }
-        }
-        return null;
-    }
-
-    private static Field field(Class<?> c, String a, String b) {
-        for (Class<?> cur = c; cur != null; cur = cur.getSuperclass()) {
-            for (String n : new String[]{a, b}) {
-                try {
-                    Field f = cur.getDeclaredField(n);
-                    f.setAccessible(true);
-                    return f;
-                } catch (NoSuchFieldException ignored) {
-                }
             }
         }
         return null;

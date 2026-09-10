@@ -14,40 +14,27 @@ import net.minecraft.world.entity.LivingEntity;
  * 由原版死亡分支调用 die()——boss 覆写的自定义死亡动画与掉落全部正常执行。
  */
 public final class EndsustainTerminal {
+    /** 终焉标记：实体 Tag（非 persistentData 状态键）。权威判定仍在 TerminalStateRegistry。 */
+    public static final String TERMINAL_TAG = "endsustain_terminal";
     public static final String TERMINAL_KEY = "EndsustainTerminalState";
-    /** getHealth 劫持开关：neutralize 完成后启用，mixin 令 getHealth 恒返回 0。 */
+    /** getHealth 劫持开关：Registry 权威；persistentData 键仅作旧版本兼容影子。 */
     public static final String HEALTH_HIJACK_KEY = "EndsustainHealthHijacked";
-    /** Agent 优先级标记键：Agent attach 后写入 wall-clock 时间戳，主线程让位窗口内不改目标。 */
-    public static final String AGENT_PRIORITY_KEY = "EndsustainAgentPriority";
-    /** 主线程让位窗口：Agent 在窗口内完成四级链；超时视为 Agent 失联，主线程恢复接管。 */
-    private static final long AGENT_PRIORITY_WINDOW_MS = 5000L;
 
     private EndsustainTerminal() {}
 
-    /**
-     * 优先级仲裁（审计 P1 补强）：Agent 线程的修改优先于主线程。
-     * 返回 true 表示 Agent 已接管且仍在活跃窗口内——主线程应让位
-     * （跳过归零/泵/移除修改，仅轮询移除结果）。
-     * 窗口超时（Agent attach 后崩溃/失联）自动清除标记并恢复主线程接管。
-     */
-    public static boolean agentHasPriority(LivingEntity target) {
-        long stamp = target.getPersistentData().getLong(AGENT_PRIORITY_KEY);
-        if (stamp <= 0L) return false;
-        if (System.currentTimeMillis() - stamp > AGENT_PRIORITY_WINDOW_MS) {
-            target.getPersistentData().remove(AGENT_PRIORITY_KEY);
-            return false;
-        }
-        return true;
-    }
-
-    /** 给目标打上终焉标记：此后任何回血/正数生命写入都会被本模组 mixin 拦截。 */
+    /** 给目标打上终焉标记（Tag + 私有表双写）：此后任何回血/正数生命写入都会被本模组 mixin 拦截。 */
     public static void mark(LivingEntity target) {
-        // 权威判定在模组私有表（TerminalStateRegistry）；persistentData 键仅作影子/诊断
+        // 权威判定在模组私有表（TerminalStateRegistry），Tag 为对外可见形态
         TerminalStateRegistry.mark(target);
-        target.getPersistentData().putBoolean(TERMINAL_KEY, true);
+        try {
+            if (!target.getTags().contains(TERMINAL_TAG)) {
+                target.addTag(TERMINAL_TAG);
+            }
+        } catch (Throwable ignored) {
+        }
         // 标记即无条件启用 Agent 层（每目标一次，attach 约 1-2 秒后并行生效）：
-        // 写槽 → 读拦截 retransform → 判定重写 → 破壳直写 → 硬移除 全链随标记启动，
-        // 不再等待 300t 超时。玩家目标除外（Agent 硬移除玩家无意义）。
+        // 写槽 → 读拦截 retransform → 判定重写 → 破壳直写 全链随标记启动，
+        // 不再等待 300t 超时。玩家目标除外（Agent 对玩家实体无意义）。
         if (!(target instanceof net.minecraft.server.level.ServerPlayer)
                 && TerminalStateRegistry.armAgentOnce(target)) {
             KillChainMonitor.log("AGENT_LAUNCH 标记即启用 目标=" + KillChainMonitor.typeName(target));
@@ -61,9 +48,16 @@ public final class EndsustainTerminal {
 
     public static void unmark(LivingEntity target) {
         TerminalStateRegistry.unmark(target.getUUID());
-        target.getPersistentData().remove(TERMINAL_KEY);
-        target.getPersistentData().remove(HEALTH_HIJACK_KEY);
-        target.getPersistentData().remove(AGENT_PRIORITY_KEY);
+        try {
+            target.removeTag(TERMINAL_TAG);
+        } catch (Throwable ignored) {
+        }
+        // 旧版本持久键残留清理（兼容历史版本标记）
+        try {
+            target.getPersistentData().remove(TERMINAL_KEY);
+            target.getPersistentData().remove(HEALTH_HIJACK_KEY);
+        } catch (Throwable ignored) {
+        }
     }
 
     /**
@@ -98,7 +92,6 @@ public final class EndsustainTerminal {
         // 五层归零完成后启用 getHealth 劫持：mixin 令 getHealth 恒返回 0，
         // 实体的回滚/回血逻辑读到的生命恒为 0，死亡状态机必然接管。
         TerminalStateRegistry.hijack(target);
-        target.getPersistentData().putBoolean(HEALTH_HIJACK_KEY, true);
         KillChainMonitor.log("HIJACK_ON getHealth 劫持启用");
 
         // L1：管道 hurt（完整受伤链；生命写入由 mixin 强制归零，原版死亡分支触发 die）
