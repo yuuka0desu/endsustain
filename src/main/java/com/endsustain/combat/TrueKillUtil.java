@@ -27,6 +27,8 @@ public final class TrueKillUtil {
     public static final String TERMINAL_STATE_KEY = "EndsustainTerminalState";
     private static final int NATURAL_TICK_DELAY = 1;
     private static final int FINALIZATION_TIMEOUT = 60;
+    /** 死亡演出保护窗口（tick）：死亡事务建立后放行时长，避免中断 Boss 死亡演出。 */
+    private static final int DEATH_GRACE_TICKS = 200;
     /** 审计 6.8-2：看门狗队列上限——P1「不放弃」使其成为硬约束，超限淘汰最旧条目并告警。 */
     private static final int MAX_PENDING = 64;
     private static final Map<UUID, PendingDeath> PENDING_DEATHS =
@@ -183,6 +185,29 @@ public final class TrueKillUtil {
                 if (EntityRawState.rawRemoved(target) || target.level().getServer() != server) {
                     EndsustainTerminal.unmark(target);
                     iterator.remove();
+                    continue;
+                }
+                // 死亡演出保护窗口：死亡事务建立后放行一段时间（200t/10 秒），
+                // 期间冻结超时计时与一切强制移除（forceRemoval/discard 均不执行），
+                // 只温和推进（泵伤害 + 归零 + 死亡动画入口），让 Boss 死亡演出完整播放；
+                // 窗口结束仍未移除则恢复超时兜底链。
+                if (deathTransactionStarted(target)
+                        && pending.deathGraceTicks < DEATH_GRACE_TICKS) {
+                    pending.deathGraceTicks++;
+                    if (pending.deathGraceTicks == 1) {
+                        KillChainMonitor.logTargetState("DEATH_GRACE", target,
+                                "死亡演出保护窗口开启（" + DEATH_GRACE_TICKS + "t）");
+                    }
+                    try {
+                        target.hurt(target.damageSources().fellOutOfWorld(), 1.0F);
+                    } catch (Throwable ignored) {
+                    }
+                    EntityHealthStateBridge.neutralize(target);
+                    EntityHealthStateBridge.startDeathAnimation(target);
+                    if (pending.deathGraceTicks >= DEATH_GRACE_TICKS) {
+                        KillChainMonitor.logTargetState("DEATH_GRACE_END", target,
+                                "演出保护窗口结束，恢复超时兜底");
+                    }
                     continue;
                 }
                 if (pending.ticksLeft-- <= 0) {
@@ -384,6 +409,8 @@ public final class TrueKillUtil {
         private boolean dieCalled;
         /** 主动掉落已触发（单次）。 */
         private boolean dropped;
+        /** 死亡演出保护窗口计数（冻结超时期间递增）。 */
+        private int deathGraceTicks;
 
         private PendingDeath(LivingEntity target, DamageSource source,
                              LivingEntity attacker, int ticksLeft) {
