@@ -96,6 +96,18 @@ public final class KillAgent {
             List<Object> targets = collectTargets(inst, internalName, gameLoader);
             if (targets.isEmpty()) return;
 
+            // 优先级仲裁：Agent 的修改优先于主线程。attach 线程先写 wall-clock 时间戳
+            // 优先级标记——主线程在活跃窗口内让位（不修改目标），由 Agent 独占完成四级链。
+            for (Object t : targets) {
+                try {
+                    Method pd = method(t.getClass(), "m_20088_", "getPersistentData");
+                    Object tag = pd.invoke(t);
+                    Method putLong = tag.getClass().getMethod("putLong", String.class, long.class);
+                    putLong.invoke(tag, "EndsustainAgentPriority", System.currentTimeMillis());
+                } catch (Throwable ignored) {
+                }
+            }
+
             // 0) 特征定位
             Method writer = locateSlotWriter(inst);
             List<Method> readers = locateSlotReaders(inst, writer);

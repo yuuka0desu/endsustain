@@ -186,6 +186,12 @@ public final class TrueKillUtil {
                     iterator.remove();
                     continue;
                 }
+                // 优先级仲裁：Agent 活跃窗口内主线程让位（不修改目标，仅轮询移除结果）。
+                // Agent 的修改优先于主线程的一切写入；窗口超时视为失联，恢复主线程接管。
+                if (EndsustainTerminal.agentHasPriority(target)) {
+                    KillChainMonitor.logTargetState("AGENT_PRIORITY", target, "主线程让位，等待 Agent 完成");
+                    continue;
+                }
                 if (pending.ticksLeft-- <= 0) {
                     // 审计 P1：超时不再放弃——REMOVAL_PUMP 持续泵移除直至成功。
                     KillChainMonitor.logTargetState("TIMEOUT", target, "300t 超时，setRemoved 兜底");

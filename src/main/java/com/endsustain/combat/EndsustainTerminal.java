@@ -17,8 +17,28 @@ public final class EndsustainTerminal {
     public static final String TERMINAL_KEY = "EndsustainTerminalState";
     /** getHealth 劫持开关：neutralize 完成后启用，mixin 令 getHealth 恒返回 0。 */
     public static final String HEALTH_HIJACK_KEY = "EndsustainHealthHijacked";
+    /** Agent 优先级标记键：Agent attach 后写入 wall-clock 时间戳，主线程让位窗口内不改目标。 */
+    public static final String AGENT_PRIORITY_KEY = "EndsustainAgentPriority";
+    /** 主线程让位窗口：Agent 在窗口内完成四级链；超时视为 Agent 失联，主线程恢复接管。 */
+    private static final long AGENT_PRIORITY_WINDOW_MS = 5000L;
 
     private EndsustainTerminal() {}
+
+    /**
+     * 优先级仲裁（审计 P1 补强）：Agent 线程的修改优先于主线程。
+     * 返回 true 表示 Agent 已接管且仍在活跃窗口内——主线程应让位
+     * （跳过归零/泵/移除修改，仅轮询移除结果）。
+     * 窗口超时（Agent attach 后崩溃/失联）自动清除标记并恢复主线程接管。
+     */
+    public static boolean agentHasPriority(LivingEntity target) {
+        long stamp = target.getPersistentData().getLong(AGENT_PRIORITY_KEY);
+        if (stamp <= 0L) return false;
+        if (System.currentTimeMillis() - stamp > AGENT_PRIORITY_WINDOW_MS) {
+            target.getPersistentData().remove(AGENT_PRIORITY_KEY);
+            return false;
+        }
+        return true;
+    }
 
     /** 给目标打上终焉标记：此后任何回血/正数生命写入都会被本模组 mixin 拦截。 */
     public static void mark(LivingEntity target) {
@@ -43,6 +63,7 @@ public final class EndsustainTerminal {
         TerminalStateRegistry.unmark(target.getUUID());
         target.getPersistentData().remove(TERMINAL_KEY);
         target.getPersistentData().remove(HEALTH_HIJACK_KEY);
+        target.getPersistentData().remove(AGENT_PRIORITY_KEY);
     }
 
     /**
