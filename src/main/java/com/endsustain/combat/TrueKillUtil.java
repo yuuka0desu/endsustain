@@ -187,28 +187,33 @@ public final class TrueKillUtil {
                     iterator.remove();
                     continue;
                 }
-                // 死亡演出保护窗口：死亡事务建立后放行一段时间（200t/10 秒），
-                // 期间冻结超时计时与一切强制移除（forceRemoval/discard 均不执行），
-                // 只温和推进（泵伤害 + 归零 + 死亡动画入口），让 Boss 死亡演出完整播放；
-                // 窗口结束仍未移除则恢复超时兜底链。
-                if (deathTransactionStarted(target)
-                        && pending.deathGraceTicks < DEATH_GRACE_TICKS) {
-                    pending.deathGraceTicks++;
-                    if (pending.deathGraceTicks == 1) {
-                        KillChainMonitor.logTargetState("DEATH_GRACE", target,
-                                "死亡演出保护窗口开启（" + DEATH_GRACE_TICKS + "t）");
+                // 死亡演出保护窗口（动态放行）：死亡事务建立后，
+                // 只要死亡演出在推进（deathTime 增长）就无限放行——动画结束才掉落的
+                // Boss（如钢铁守护者）演出多久就放行多久，绝不中途强制移除；
+                // 仅当演出停滞（deathTime 连续 DEATH_GRACE_TICKS 不增长）才恢复兜底。
+                if (deathTransactionStarted(target)) {
+                    if (target.deathTime > pending.lastDeathTime) {
+                        // 演出在推进：重置停滞计时，持续放行
+                        pending.lastDeathTime = target.deathTime;
+                        pending.deathGraceTicks = 0;
+                    } else {
+                        pending.deathGraceTicks++;
                     }
-                    try {
-                        target.hurt(target.damageSources().fellOutOfWorld(), 1.0F);
-                    } catch (Throwable ignored) {
+                    if (pending.deathGraceTicks < DEATH_GRACE_TICKS) {
+                        // 温和推进：泵伤害 + 归零 + 死亡动画入口（冻结超时与强制移除）
+                        try {
+                            target.hurt(target.damageSources().fellOutOfWorld(), 1.0F);
+                        } catch (Throwable ignored) {
+                        }
+                        EntityHealthStateBridge.neutralize(target);
+                        EntityHealthStateBridge.startDeathAnimation(target);
+                        continue;
                     }
-                    EntityHealthStateBridge.neutralize(target);
-                    EntityHealthStateBridge.startDeathAnimation(target);
-                    if (pending.deathGraceTicks >= DEATH_GRACE_TICKS) {
+                    if (pending.deathGraceTicks == DEATH_GRACE_TICKS) {
                         KillChainMonitor.logTargetState("DEATH_GRACE_END", target,
-                                "演出保护窗口结束，恢复超时兜底");
+                                "演出停滞" + DEATH_GRACE_TICKS + "t，恢复超时兜底");
                     }
-                    continue;
+                    // 停滞超时：落入下方 POST_DEATH_PUMP 兜底路径（不 continue）
                 }
                 if (pending.ticksLeft-- <= 0) {
                     // 审计 P1：超时不再放弃——REMOVAL_PUMP 持续泵移除直至成功。
@@ -409,8 +414,10 @@ public final class TrueKillUtil {
         private boolean dieCalled;
         /** 主动掉落已触发（单次）。 */
         private boolean dropped;
-        /** 死亡演出保护窗口计数（冻结超时期间递增）。 */
+        /** 死亡演出保护窗口停滞计数（deathTime 不推进期间递增）。 */
         private int deathGraceTicks;
+        /** 上次观测的 deathTime（推进检测用）。 */
+        private int lastDeathTime;
 
         private PendingDeath(LivingEntity target, DamageSource source,
                              LivingEntity attacker, int ticksLeft) {
