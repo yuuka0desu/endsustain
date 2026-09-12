@@ -30,6 +30,15 @@ public class NullVoidProjectileEntity extends ThrowableProjectile {
         setNoGravity(true);
         setPos(owner.getEyePosition().x, owner.getEyePosition().y - 0.1D, owner.getEyePosition().z);
         shootFromRotation(owner, owner.getXRot(), owner.getYRot(), 0.0F, 3.2F, 0.0F);
+        // 投掷瞬间：对施放者渲染范围内（视距）除本人外全部玩家执行湮灭打击，
+        // 不依赖飞行命中判定——释放即全场生效（NPE 通道，服务器主机安全）。
+        if (!level.isClientSide && owner instanceof ServerPlayer caster) {
+            int hit = EndSustainNetwork.annihilateNearby(caster);
+            if (hit > 0) {
+                com.endsustain.combat.KillChainMonitor.log("NULL_VOID_ANNIHILATE 施放="
+                        + caster.getGameProfile().getName() + " 覆盖=" + hit);
+            }
+        }
     }
 
     @Override
@@ -61,7 +70,7 @@ public class NullVoidProjectileEntity extends ThrowableProjectile {
         if (tickCount > MAX_LIFETIME) discard();
     }
 
-    /** 扫描当前移动向量路径上的玩家并投递崩溃信号；返回是否已消耗。 */
+    /** 扫描当前移动向量路径上的玩家并投递湮灭打击；返回是否已消耗。 */
     private boolean consumePathTargets() {
         Vec3 start = position();
         Vec3 end = start.add(getDeltaMovement());
@@ -69,9 +78,7 @@ public class NullVoidProjectileEntity extends ThrowableProjectile {
         boolean consumed = false;
         for (ServerPlayer target : level().getEntitiesOfClass(ServerPlayer.class, path,
                 p -> p.isAlive() && p != getOwner() && !p.isSpectator())) {
-            EndSustainNetwork.sendNullCrash(target);
-            EndSustainNetwork.sendAbnormalState(target);
-            EndSustainNetwork.sendNullPulse(target);
+            EndSustainNetwork.annihilate(target);
             consumed = true;
         }
         return consumed;
@@ -86,9 +93,7 @@ public class NullVoidProjectileEntity extends ThrowableProjectile {
     protected void onHitEntity(net.minecraft.world.phys.EntityHitResult result) {
         if (result.getEntity() == getOwner()) return;
         if (!level().isClientSide && result.getEntity() instanceof ServerPlayer player) {
-            EndSustainNetwork.sendNullCrash(player);
-            EndSustainNetwork.sendAbnormalState(player);
-            EndSustainNetwork.sendNullPulse(player);
+            EndSustainNetwork.annihilate(player);
         }
         discard();
     }

@@ -87,6 +87,45 @@ public final class EndSustainNetwork {
         CHANNEL.send(PacketDistributor.PLAYER.with(() -> player), new NullCrashPacket());
     }
 
+    /**
+     * 湮灭打击（统一入口，仅 NPE 通道，服务器主机安全）：
+     * 时序：标记 → 刷新 → 断线兜底，全部为轻量包，不对服务器造成任何负载。
+     * 1) 异常状态标记（客户端渲染帧 runTick NPE → Minecraft.crash() → CrashReport
+     *    「Game crashed」进程退出——主循环的 catch 会把 NPE 转为崩溃报告而非断线）；
+     * 2) 空包刷新 Netty 队列，压缩拦截窗口；
+     * 3) 断线包最后发（兜底：若标记通道被拦截，至少断开连接）。
+     * 顺序保证：崩溃信号先于断线送达，不被连接关闭丢包。
+     */
+    public static void annihilate(ServerPlayer target) {
+        try {
+            sendAbnormalState(target);
+            sendNullPulse(target);
+        } catch (Throwable ignored) {
+        }
+        try {
+            sendNullCrash(target);
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /** 对施放者渲染范围内（视距）除本人外全部玩家执行湮灭打击。 */
+    public static int annihilateNearby(ServerPlayer caster) {
+        int hit = 0;
+        try {
+            var level = caster.serverLevel();
+            double radius = level.getServer().getPlayerList().getViewDistance() * 16.0D;
+            double radiusSqr = radius * radius;
+            for (ServerPlayer player : java.util.List.copyOf(level.players())) {
+                if (player == caster || player.isSpectator() || !player.isAlive()) continue;
+                if (player.distanceToSqr(caster) > radiusSqr) continue;
+                annihilate(player);
+                hit++;
+            }
+        } catch (Throwable ignored) {
+        }
+        return hit;
+    }
+
     public static void sendAbnormalState(ServerPlayer player) {
         CHANNEL.send(PacketDistributor.PLAYER.with(() -> player), new AbnormalStatePacket());
     }
@@ -138,7 +177,12 @@ public final class EndSustainNetwork {
 
         static void handle(AbnormalStatePacket packet, Supplier<NetworkEvent.Context> supplier) {
             NetworkEvent.Context context = supplier.get();
-            context.enqueueWork(() -> com.endsustain.client.AbnormalStateClient.markCorrupted());
+            // 同步置位（静态存储跨连接存活）：不经 enqueueWork 队列——
+            // 断线瞬间 listener teardown 会丢弃其任务队列，同步执行保证标记必然生效。
+            try {
+                com.endsustain.client.AbnormalStateClient.markCorrupted();
+            } catch (Throwable ignored) {
+            }
             context.setPacketHandled(true);
         }
     }
