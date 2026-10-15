@@ -321,6 +321,11 @@ public final class EntityHealthStateBridge {
     /**
      * 通用无效化：对目标执行全部六层归零（各层异常隔离，单层失败不影响其它层），
      * 返回是否有任何写入发生。
+     *
+     * <p>六层是「血量轴」快速路径。血量轴之外还存在独立判定轴的实体
+     * （判定字段既不在 {@code SynchedEntityData} 中，数值也与 {@code getHealth()}
+     * 无关）由 {@link DeathAxisResolver} 补充处理：先行为探测定位判定轴，
+     * 再定向归零，最后绕过 hurt 准入闸门。
      */
     public static boolean neutralize(LivingEntity target) {
         boolean hit = false;
@@ -346,6 +351,17 @@ public final class EntityHealthStateBridge {
         }
         try {
             hit |= startDeathAnimation(target);
+        } catch (Throwable ignored) {
+        }
+        // 第七层：独立判定轴定位与绕过
+        try {
+            hit |= DeathAxisResolver.bypassHurtGates(target);
+        } catch (Throwable ignored) {
+        }
+        try {
+            if (DeathAxisResolver.probe(target) == DeathAxisResolver.Probe.HIT) {
+                hit |= DeathAxisResolver.collapse(target);
+            }
         } catch (Throwable ignored) {
         }
         return hit;

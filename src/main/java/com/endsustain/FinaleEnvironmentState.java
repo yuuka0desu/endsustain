@@ -56,17 +56,26 @@ public final class FinaleEnvironmentState {
 
     @SubscribeEvent
     public static void onPlayerLogin(PlayerEvent.PlayerLoggedInEvent event) {
-        if (event.getEntity() instanceof ServerPlayer player) EndSustainNetwork.sendEnvironment(player, active);
+        if (event.getEntity() instanceof ServerPlayer player) {
+            EndSustainNetwork.sendEnvironment(player, active);
+            com.endsustain.music.FinaleMusicState.syncTo(player);
+        }
     }
 
     @SubscribeEvent
     public static void onPlayerRespawn(PlayerEvent.PlayerRespawnEvent event) {
-        if (event.getEntity() instanceof ServerPlayer player) EndSustainNetwork.sendEnvironment(player, active);
+        if (event.getEntity() instanceof ServerPlayer player) {
+            EndSustainNetwork.sendEnvironment(player, active);
+            com.endsustain.music.FinaleMusicState.syncTo(player);
+        }
     }
 
     @SubscribeEvent
     public static void onPlayerChangedDimension(PlayerEvent.PlayerChangedDimensionEvent event) {
-        if (event.getEntity() instanceof ServerPlayer player) EndSustainNetwork.sendEnvironment(player, active);
+        if (event.getEntity() instanceof ServerPlayer player) {
+            EndSustainNetwork.sendEnvironment(player, active);
+            com.endsustain.music.FinaleMusicState.syncTo(player);
+        }
     }
 
     @SubscribeEvent
@@ -76,9 +85,11 @@ public final class FinaleEnvironmentState {
         com.endsustain.combat.TrueKillUtil.clearAll();
         com.endsustain.combat.TimeStopManager.clear();
         com.endsustain.combat.TerminalStateRegistry.clear();
+        com.endsustain.combat.DeathAxisResolver.clear();
         com.endsustain.entity.boss.DimensionPhaseManager.clear();
         com.endsustain.entity.boss.EndsustainBladeEntity.clearPresence();
         com.endsustain.event.ForgeBusEvents.cleanupFinalePresence();
         com.endsustain.progress.FinaleActiveSkills.clearState();
+        com.endsustain.music.FinaleMusicState.reset();
     }
 }

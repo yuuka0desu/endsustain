@@ -89,6 +89,12 @@ public final class EndsustainTerminal {
     public static void terminate(LivingEntity target, DamageSource source, LivingEntity attacker) {
         mark(target);
         clearDefenses(target);
+        // hurt 准入闸门先于管道伤害绕过：否则目标自身的伤害钳制会把
+        // Float.MAX_VALUE 压回小值，并把本次调用计入「非法伤害」累计。
+        try {
+            DeathAxisResolver.bypassHurtGates(target);
+        } catch (Throwable ignored) {
+        }
 
         // 蘸酱 Boss 有独立的死亡尾流程（星辰矢反杀 + finalize 掉落），
         // 不可进入强制移除队列，否则死亡尾会被提前掐断、掉落丢失。
@@ -106,7 +112,6 @@ public final class EndsustainTerminal {
                 target.isDeadOrDying());
         KillChainMonitor.logTargetState("L0", target, "neutralize写入=" + neutralized);
         if (EntityRawState.rawRemoved(target)) return;
-
         // 五层归零完成后启用 getHealth 劫持：mixin 令 getHealth 恒返回 0，
         // 实体的回滚/回血逻辑读到的生命恒为 0，死亡状态机必然接管。
         hijack(target);
@@ -146,10 +151,23 @@ public final class EndsustainTerminal {
         if (EntityRawState.rawRemoved(target)) return true;
         mark(target);
         clearDefenses(target);
+        // 每 tick 重试闸门绕过：目标侧可能在其它路径重置冷却计数器
+        try {
+            DeathAxisResolver.bypassHurtGates(target);
+        } catch (Throwable ignored) {
+        }
         // 每 tick 四层归零：任何回滚/回血/纠正都敌不过下一 tick 的重新归零
         boolean neutralized = EntityHealthStateBridge.neutralize(target);
+        // 独立判定轴同样每 tick 压制：目标侧 init/校验可能把判定字段恢复成满值
+        boolean collapsed = false;
+        try {
+            if (DeathAxisResolver.probe(target) == DeathAxisResolver.Probe.HIT) {
+                collapsed = DeathAxisResolver.collapse(target);
+            }
+        } catch (Throwable ignored) {
+        }
         KillChainMonitor.logTargetState("WATCHDOG_TICK", target,
-                "neutralize写入=" + neutralized + " 死亡事务="
+                "neutralize写入=" + neutralized + " 判定轴归零=" + collapsed + " 死亡事务="
                         + TrueKillUtil.isDeathTransactionStarted(target)
                         + " registry=" + TerminalStateRegistry.isMarked(target)
                         + "/" + TerminalStateRegistry.isHijacked(target));

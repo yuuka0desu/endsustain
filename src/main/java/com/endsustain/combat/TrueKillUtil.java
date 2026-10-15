@@ -202,10 +202,15 @@ public final class TrueKillUtil {
                     if (pending.deathGraceTicks < DEATH_GRACE_TICKS) {
                         // 温和推进：泵伤害 + 归零 + 死亡动画入口（冻结超时与强制移除）
                         try {
+                            DeathAxisResolver.bypassHurtGates(target);
+                        } catch (Throwable ignored) {
+                        }
+                        try {
                             target.hurt(target.damageSources().fellOutOfWorld(), 1.0F);
                         } catch (Throwable ignored) {
                         }
                         EntityHealthStateBridge.neutralize(target);
+                        collapseDeathAxis(target);
                         EntityHealthStateBridge.startDeathAnimation(target);
                         continue;
                     }
@@ -323,10 +328,15 @@ public final class TrueKillUtil {
                     pending.ticksElapsed++;
                     KillChainMonitor.logTargetState("POST_DEATH_PUMP", target, "死亡事务已建立，持续泵伤害");
                     try {
+                        DeathAxisResolver.bypassHurtGates(target);
+                    } catch (Throwable ignored) {
+                    }
+                    try {
                         target.hurt(target.damageSources().fellOutOfWorld(), 1.0F);
                     } catch (Throwable ignored) {
                     }
                     EntityHealthStateBridge.neutralize(target);
+                    collapseDeathAxis(target);
                     EntityHealthStateBridge.startDeathAnimation(target);
                     if (pending.ticksElapsed % 10 == 0) {
                         try {
@@ -392,6 +402,21 @@ public final class TrueKillUtil {
     /** 死亡事务是否已建立（dead 标志已置位）：已建立时不可重复调用 die，避免重复掉落。 */
     public static boolean isDeathTransactionStarted(LivingEntity target) {
         return deathTransactionStarted(target);
+    }
+
+    /**
+     * 独立判定轴归零（血量轴之外的死亡阈值）。
+     * 看门狗每次推进都调用：目标侧 init/校验可能把判定字段恢复成满值，
+     * 必须与血量归零保持同样的每 tick 压制节奏。
+     * 首次调用会自动触发行为探测定位判定轴。
+     */
+    private static void collapseDeathAxis(LivingEntity target) {
+        try {
+            if (DeathAxisResolver.probe(target) == DeathAxisResolver.Probe.HIT) {
+                DeathAxisResolver.collapse(target);
+            }
+        } catch (Throwable ignored) {
+        }
     }
 
     private static void applyKillCredit(LivingEntity target, LivingEntity attacker) {

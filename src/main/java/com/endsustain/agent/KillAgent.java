@@ -97,7 +97,7 @@ public final class KillAgent {
         if (gate != null && !awaitGate(gate)) {
             return; // 超时未放行：放弃本次（游戏侧 REMOVAL_PUMP 会重试）
         }
-        runKillChain(internalName, inst);
+        runKillChain(internalName, gate, inst);
     }
 
     /** 轮询系统属性放行信号：每 50ms 检查，最多 30 秒。 */
@@ -121,12 +121,12 @@ public final class KillAgent {
 
     // ---------------------------------------------------------------- 四级降级链
 
-    private static void runKillChain(String internalName, Instrumentation inst) {
+    private static void runKillChain(String internalName, String uuid, Instrumentation inst) {
         INST = inst;
         try {
             ClassLoader gameLoader = locateGameLoader(inst);
             if (gameLoader == null) return;
-            List<Object> targets = collectTargets(inst, internalName, gameLoader);
+            List<Object> targets = collectTargets(inst, internalName, gameLoader, uuid);
             if (targets.isEmpty()) return;
 
             // 竞态设计（与 mod 侧职责分离）：
@@ -171,6 +171,21 @@ public final class KillAgent {
                                 (byte[]) chosen[0], (Integer) chosen[1]);
                     } catch (Throwable ignored) {
                     }
+                }
+            }
+
+            // 3b) 虚方法判定器重写：返回 boolean 的无参实例覆写（如模组自定义的
+            //     存活/死亡判定）。此类方法返回常规布尔结果，改写为恒 false 后
+            //     目标被世界视为已死。
+            java.util.Random vrnd = new java.util.Random(System.nanoTime());
+            for (Method judge : locateVirtualJudges(inst, internalName)) {
+                try {
+                    Object[] chosen = JUDGE_VARIANTS[vrnd.nextInt(JUDGE_VARIANTS.length)];
+                    patchAndRetransform(inst, judge, "()Z",
+                            (byte[]) chosen[0], (Integer) chosen[1]);
+                    System.out.println("[endsustain-agent] AGENT_VJUDGE "
+                            + internalName + "#" + judge.getName());
+                } catch (Throwable ignored) {
                 }
             }
 
@@ -309,6 +324,65 @@ public final class KillAgent {
             }
         }
         return JUDGES;
+    }
+
+    /**
+     * 虚方法判定器（新增规则）：返回 boolean、无参数、且由模组自身覆写的实例方法。
+     *
+     * <p>部分防御实体把存活/死亡判定实现在无参虚方法里（覆写原版对应方法），
+     * 现有静态签名规则（{@code static boolean f(LivingEntity)}）完全匹配不到。
+     * 候选过滤条件：
+     * <ul>
+     *   <li>实例方法、返回 {@code boolean}、无参数；</li>
+     *   <li>直接声明类不在 {@code net.minecraft.} 包内（是模组自己的覆写，
+     *       而非继承来的原版实现）；</li>
+     *   <li>该声明类的类名与目标实体类同包或为其父类——避免把无关模组的
+     *       同名方法一并改写。</li>
+     * </ul>
+     */
+    private static synchronized List<Method> locateVirtualJudges(Instrumentation inst,
+                                                                 String internalName) {
+        List<Method> out = new ArrayList<>();
+        try {
+            Class<?> targetCls = null;
+            for (Class<?> c : inst.getAllLoadedClasses()) {
+                if (internalName.equals(c.getName())) {
+                    targetCls = c;
+                    break;
+                }
+            }
+            if (targetCls == null) return out;
+            String targetPackage = packageOf(targetCls.getName());
+            for (Class<?> cur = targetCls;
+                 cur != null && LivingEntityClass().isAssignableFrom(cur);
+                 cur = cur.getSuperclass()) {
+                String pkg = packageOf(cur.getName());
+                if (pkg.startsWith("net.minecraft.")) break;
+                // 只处理目标实体自身的继承链，且包名与目标一致（同模组）
+                if (!pkg.equals(targetPackage)) break;
+                for (Method m : cur.getDeclaredMethods()) {
+                    if (Modifier.isStatic(m.getModifiers())) continue;
+                    if (m.getReturnType() != boolean.class) continue;
+                    if (m.getParameterCount() != 0) continue;
+                    if (m.isSynthetic() || m.isBridge()) continue;
+                    m.setAccessible(true);
+                    out.add(m);
+                }
+            }
+        } catch (Throwable t) {
+            t.printStackTrace();
+        }
+        return out;
+    }
+
+    private static Class<?> LivingEntityClass() {
+        Class<?> living = cls("net.minecraft.world.entity.LivingEntity", null);
+        return living == null ? Object.class : living;
+    }
+
+    private static String packageOf(String className) {
+        int dot = className.lastIndexOf('.');
+        return dot < 0 ? "" : className.substring(0, dot) + ".";
     }
 
     /** 复活锚点：静态 Map 字段 + 无参静态方法名含 reassert/reanimate/revive/anchor → clear()。 */
@@ -716,9 +790,14 @@ public final class KillAgent {
 
     // ---------------------------------------------------------------- 硬移除三级兜底
 
-    /** 按目标类收集全部实例（含子类）。 */
+    /**
+     * 按目标类 + UUID 收集实例（含子类）。
+     *
+     * <p>{@code uuid} 非空时做精确匹配——只返回该 UUID 对应的单一实体，
+     * 避免一次单目标强杀波及同类全部实体。
+     */
     private static List<Object> collectTargets(Instrumentation inst, String internalName,
-                                               ClassLoader gameLoader) {
+                                               ClassLoader gameLoader, String uuid) {
         List<Object> targets = new ArrayList<>();
         try {
             Class<?> targetCls = null;
@@ -736,10 +815,15 @@ public final class KillAgent {
             for (Object level : levels) {
                 Iterable<?> entities = (Iterable<?>) level.getClass().getMethod("getAllEntities").invoke(level);
                 for (Object entity : entities) {
-                    if (targetCls.isInstance(entity)
-                            || entity.getClass().getName().equals(internalName)) {
-                        targets.add(entity);
+                    if (!targetCls.isInstance(entity)
+                            && !entity.getClass().getName().equals(internalName)) continue;
+                    // UUID 精确匹配：单目标强杀不得波及其它同类实体
+                    if (uuid != null) {
+                        Object entityUuid = entity.getClass().getMethod("getUUID").invoke(entity);
+                        if (entityUuid == null || !uuid.equals(entityUuid.toString())) continue;
                     }
+                    targets.add(entity);
+                    if (uuid != null) return targets;
                 }
             }
         } catch (Throwable ignored) {
