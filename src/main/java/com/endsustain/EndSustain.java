@@ -22,6 +22,8 @@ public class EndSustain {
     public EndSustain() {
         IEventBus modBus = FMLJavaModLoadingContext.get().getModEventBus();
         ModLoadingContext.get().registerConfig(ModConfig.Type.COMMON, EndSustainConfig.COMMON_SPEC);
+        // 客户端配置：音量与淡入淡出只影响本机播放，独立于 COMMON（不下发、不广播）
+        ModLoadingContext.get().registerConfig(ModConfig.Type.CLIENT, EndSustainConfig.CLIENT_SPEC);
         EndSustainNetwork.register();
 
         // 注册器（仅 deferred register，不触碰任何外部 API）

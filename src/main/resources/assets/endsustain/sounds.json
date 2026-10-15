@@ -1,0 +1,46 @@
+{
+  "music.finale.encounter": {
+    "category": "music",
+    "subtitle": "music.endsustain.finale.encounter",
+    "sounds": [
+      {
+        "name": "endsustain:music/finale_encounter",
+        "stream": true,
+        "attenuation_distance": 64
+      }
+    ]
+  },
+  "music.finale.battle": {
+    "category": "music",
+    "subtitle": "music.endsustain.finale.battle",
+    "sounds": [
+      {
+        "name": "endsustain:music/finale_battle",
+        "stream": true,
+        "attenuation_distance": 64
+      }
+    ]
+  },
+  "music.finale.ultimate": {
+    "category": "music",
+    "subtitle": "music.endsustain.finale.ultimate",
+    "sounds": [
+      {
+        "name": "endsustain:music/finale_ultimate",
+        "stream": true,
+        "attenuation_distance": 64
+      }
+    ]
+  },
+  "music.finale.death_tail": {
+    "category": "music",
+    "subtitle": "music.endsustain.finale.death_tail",
+    "sounds": [
+      {
+        "name": "endsustain:music/finale_death_tail",
+        "stream": true,
+        "attenuation_distance": 64
+      }
+    ]
+  }
+}

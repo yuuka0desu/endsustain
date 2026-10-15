@@ -18,7 +18,8 @@
   "client": [
     "LightTextureMixin",
     "AbnormalStateMixin",
-    "AbnormalStateReinforceMixin"
+    "AbnormalStateReinforceMixin",
+    "MusicSuppressionMixin"
   ],
   "injectors": {
     "defaultRequire": 1

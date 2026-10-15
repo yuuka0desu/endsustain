@@ -62,6 +62,9 @@ public final class EndSustainNetwork {
         CHANNEL.registerMessage(10, UltimateFilterPacket.class, UltimateFilterPacket::encode,
                 UltimateFilterPacket::decode, UltimateFilterPacket::handle,
                 Optional.of(NetworkDirection.PLAY_TO_CLIENT));
+        CHANNEL.registerMessage(11, MusicTrackPacket.class, MusicTrackPacket::encode,
+                MusicTrackPacket::decode, MusicTrackPacket::handle,
+                Optional.of(NetworkDirection.PLAY_TO_CLIENT));
     }
 
     public static void broadcastEnvironment(MinecraftServer server, boolean active) {
@@ -143,6 +146,40 @@ public final class EndSustainNetwork {
     /** 终结技命中（或流程中断）后：向维度内所有客户端广播关闭黑白滤镜。 */
     public static void broadcastUltimateFilterEnd(ServerLevel level) {
         CHANNEL.send(PacketDistributor.DIMENSION.with(() -> level.dimension()), new UltimateFilterPacket(false));
+    }
+
+    /**
+     * 下发战斗音乐轨切换。
+     *
+     * <p>只在<b>状态变化时</b>由服务端调用，不做周期性重复下发——
+     * 客户端把重复下发视为重播，会导致每 20 tick 重头开始。
+     */
+    public static void sendMusicTrack(ServerPlayer player, int trackOrdinal) {
+        CHANNEL.send(PacketDistributor.PLAYER.with(() -> player), new MusicTrackPacket(trackOrdinal));
+    }
+
+    /**
+     * 音乐轨切换包。
+     *
+     * <p>{@code trackOrdinal} 对应 {@code FinaleMusicState.Track} 的序号。
+     * 不携带播放偏移——Minecraft 的声音系统没有 seek 能力，
+     * 中途加入的玩家从曲目起点开始，一致性由服务端统一切换时刻保证。
+     */
+    public record MusicTrackPacket(int trackOrdinal) {
+        static void encode(MusicTrackPacket packet, FriendlyByteBuf buffer) {
+            buffer.writeVarInt(packet.trackOrdinal);
+        }
+
+        static MusicTrackPacket decode(FriendlyByteBuf buffer) {
+            return new MusicTrackPacket(Math.max(0, buffer.readVarInt()));
+        }
+
+        static void handle(MusicTrackPacket packet, Supplier<NetworkEvent.Context> supplier) {
+            NetworkEvent.Context context = supplier.get();
+            // 经客户端网关分发：公共网络类不直接引用 client.*（专用服务器安全）
+            context.enqueueWork(() -> ClientPacketGate.musicTrack(packet.trackOrdinal));
+            context.setPacketHandled(true);
+        }
     }
 
     /** 第一重崩溃：客户端收到后立即在主线程触发空指针异常。 */
