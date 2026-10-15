@@ -8,3 +8,7 @@ run/
 *.class
 *.jar
 hs_err_pid*
+
+# 战斗音乐音频：第三方版权素材，不入库
+# 本地放置 .ogg 到 src/main/resources/assets/endsustain/sounds/music/ 即可生效
+src/main/resources/assets/endsustain/sounds/music/*.ogg
