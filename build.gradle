@@ -68,10 +68,17 @@ dependencies {
     // ---- GeckoLib (仅用于加载 Bedrock 静态模型，不做骨骼动画) ----
     implementation fg.deobf('software.bernie.geckolib:geckolib-forge-1.20.1:4.4.9')
     compileOnly fg.deobf('top.theillusivec4.curios:curios-forge:5.11.0+1.20.1:api')
-    // 灾变：用于潮汐钩爪兼容 Mixin 的编译期目标，运行时由整合包提供。
-    compileOnly fg.deobf(files('C:/Users/Administrator/Desktop/PCL/PCL/.minecraft/versions/Closing Song1.6.5/mods/L_Enders_Cataclysm-3.09.jar'))
-    // JEI：仅用于隐藏虚空断刃的插件类，运行时由整合包提供（JEI 缺失时插件不会被加载）。
-    compileOnly fg.deobf(files('C:/Users/Administrator/Desktop/PCL/PCL/.minecraft/versions/Closing Song1.6.5/mods/jei-1.20.1-forge-15.8.0.11.jar'))
+
+    // ---- 本地编译期依赖 ----
+    // 灾变（潮汐钩爪兼容 Mixin 的编译期目标）与 JEI（隐藏虚空断刃的插件类）
+    // 无公开 maven，需本地放置 jar。缺失时相关兼容代码仍能编译，
+    // 因为引用点是反射调用；此处用文件存在性判断避免构建中断。
+    file('libs').mkdirs()
+    ['libs/L_Enders_Cataclysm-3.09.jar', 'libs/jei-1.20.1-forge-15.8.0.11.jar'].each { path ->
+        if (file(path).exists()) {
+            compileOnly fg.deobf(files(path))
+        }
+    }
 
     // ---- 四个前置依赖 (编译期兼容代码所需; 运行时由实际 jar 提供) ----
     // Iron's Spells 'n Spellbooks

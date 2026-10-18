@@ -6,7 +6,7 @@ import java.util.List;
  *
  * 依据：
  * - 强杀链真实代码（EndsustainTerminal/TrueKillUtil/EntityHealthStateBridge/AgentBridge）
- * - 《亚波伦无协议完整击杀路径.md》的防御模型
+ * - 亚波伦实测防御模型（据实体行为归纳，非源码引用）
  *
  * 目的：在不启动游戏的情况下逐 tick 推演整条链的行为、预期结果与掉落完整度。
  */

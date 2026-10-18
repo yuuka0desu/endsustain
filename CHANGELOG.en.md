@@ -1,3 +1,42 @@
+# Unreleased
+
+## Terminal Kill Chain
+
+- Added a death-axis resolver. The previous six neutralization layers all assumed
+  an entity's real health lives in the vanilla health data item; entities that
+  keep their death threshold in a separate object field (for example
+  `CombatProgress.progress` on youkaishomecoming bosses) were never touched.
+  The new layer probes candidate fields by writing zero and observing whether
+  `isAlive()` flips, restoring the original value on a miss, so nothing is
+  mutated speculatively.
+- Hurt-gate bypass now runs before the pipeline damage in `terminate()`. Without
+  this, targets that clamp incoming damage re-clamped `Float.MAX_VALUE` down to a
+  small value and logged the attempt as illegal damage.
+- Watchdog and retry paths now reapply the death-axis collapse every tick, giving
+  the same sustained pressure the health-zeroing layers already had.
+- `KillAgent` gained a virtual-method judge rule for no-arg boolean overrides, and
+  `collectTargets` matches by UUID so a single kill cannot touch every entity of
+  the same class.
+
+## Boss Music
+
+- Added a server-authoritative battle music system with four tracks mapped to boss
+  phases (encounter / battle / ultimate / death tail).
+- Track selection takes the highest-priority phase across all bosses and keeps a
+  single global track, so multiple bosses never overlap.
+- Music starts on the tick a boss joins the level and stops when it is fully
+  removed. Range is limited to the same dimension, within the configured radius,
+  and only while the boss's chunk is loaded.
+- Client playback fades in and out per tick; missing audio files degrade silently
+  instead of spamming the log.
+- A `SoundManager.play` mixin suppresses other mods' MUSIC sources while ours is
+  active, so competing boss themes cannot steal the channel.
+- Client packet handling now goes through `ClientPacketGate`, which defers to
+  `DistExecutor`, so adding client-bound packets no longer risks dedicated-server
+  class loading failures.
+- Audio assets are intentionally not committed (third-party material). Drop `.ogg`
+  files into `src/main/resources/assets/endsustain/sounds/music/` locally.
+
 # EndSustain 0.2.7
 
 ## Combat Fixes

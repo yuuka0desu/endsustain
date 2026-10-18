@@ -4,7 +4,7 @@ import java.util.List;
 /**
  * 终焉之刃 对 tutm（the_ultimate_time_manager）击杀流程模拟。
  *
- * 防御模型（《通用Mixin无效化器报告》）：
+ * 防御模型（据实体行为归纳）：
  * - 生命存储：persistentData 虚拟生命 Float 键 + 数据项镜像（两处均被 L0 归零命中）
  * - 石碑免伤：64 格内有 ChronosMonolith 时 hurt 泵永远被吞
  * - 死亡序列：health<=0 且「伤害事件通过」才启动；超新星保底一次后第二次进入死亡动画
